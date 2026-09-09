@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0f14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Chess FEN Scanner</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="topbar">
+    <h1>&#9822; Chess FEN Scanner</h1>
+    <div class="steps">
+      <div class="step-dot" data-step="capture"></div>
+      <div class="step-dot" data-step="calibrate"></div>
+      <div class="step-dot" data-step="correct"></div>
+      <div class="step-dot" data-step="analyze"></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="error-banner" id="errorBanner"></div>
+
+    <!-- STEP 1: CAPTURE -->
+    <section class="screen" id="screen-capture">
+      <div class="card">
+        <p class="hint">Scatta una foto alla scacchiera (dall'alto, ben illuminata) oppure carica uno screenshot/immagine da Chess.com. Poi allinea i 4 angoli per estrarre automaticamente il FEN.</p>
+        <div class="capture-actions">
+          <button class="big-action primary" id="btnCamera">
+            <span class="emoji">&#128247;</span>
+            Scatta foto
+          </button>
+          <button class="big-action" id="btnGallery">
+            <span class="emoji">&#128444;&#65039;</span>
+            Da galleria
+          </button>
+        </div>
+        <input type="file" id="inputCamera" class="hidden-input" accept="image/*" capture="environment">
+        <input type="file" id="inputGallery" class="hidden-input" accept="image/*">
+      </div>
+      <div class="card">
+        <p class="hint" style="margin-bottom:0">Oppure parti da una posizione vuota e componila a mano.</p>
+        <button class="full" id="btnManual" style="margin-top:12px">Componi manualmente</button>
+      </div>
+    </section>
+
+    <!-- STEP 2: CALIBRATE -->
+    <section class="screen" id="screen-calibrate">
+      <div class="card">
+        <p class="hint" id="calibrateHint">Tocca i 4 angoli della scacchiera nell'immagine, in quest'ordine: <b>alto-sinistra &rarr; alto-destra &rarr; basso-destra &rarr; basso-sinistra</b>.</p>
+        <div class="canvas-wrap" id="canvasWrap">
+          <canvas id="photoCanvas"></canvas>
+          <canvas id="overlayCanvas"></canvas>
+        </div>
+        <div class="corner-toolbar">
+          <button class="ghost icon-btn" id="btnResetPoints">&#8635; Azzera punti</button>
+          <span class="badge" id="pointsBadge">0 / 4 punti</span>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+          <button class="ghost" id="btnBackToCapture">&larr; Indietro</button>
+          <button class="primary full" id="btnConfirmCorners" disabled>Estrai posizione &rarr;</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 3: CORRECT -->
+    <section class="screen" id="screen-correct">
+      <div class="card">
+        <p class="hint">Rilevamento automatico completato: casella vuota/occupata e colore del pezzo sono stimati dall'immagine. <b>Trascina i pezzi corretti</b> dal vassoio sulle caselle per sistemare il tipo di ogni pezzo (l'algoritmo non riconosce il tipo, solo presenza e colore).</p>
+        <div class="toggle-row">
+          <label class="check"><input type="checkbox" id="chkFlipRows"> Nero in basso nella foto</label>
+          <label class="check"><input type="checkbox" id="chkMirror"> Specchia colonne (a&#8596;h)</label>
+        </div>
+        <div id="editorBoard"></div>
+        <div class="btn-row" style="margin-top:14px">
+          <button class="ghost icon-btn" id="btnClearBoard">Svuota</button>
+          <button class="ghost icon-btn" id="btnStartPos">Posizione iniziale</button>
+          <button class="ghost icon-btn" id="btnRedetect">&#8635; Ri-rileva</button>
+        </div>
+
+        <div class="grid-2">
+          <div>
+            <span class="field-label">Turno di chi muove</span>
+            <select id="selTurn">
+              <option value="w">Bianco</option>
+              <option value="b">Nero</option>
+            </select>
+          </div>
+          <div>
+            <span class="field-label">Casella en passant</span>
+            <input type="text" id="inputEp" placeholder="- (nessuna)" maxlength="2">
+          </div>
+        </div>
+
+        <span class="field-label" style="margin-top:12px; display:block">Arrocco disponibile</span>
+        <div class="castle-row">
+          <label class="check"><input type="checkbox" id="chkCK" checked> Bianco 0-0</label>
+          <label class="check"><input type="checkbox" id="chkCQ" checked> Bianco 0-0-0</label>
+          <label class="check"><input type="checkbox" id="chkck" checked> Nero 0-0</label>
+          <label class="check"><input type="checkbox" id="chkcq" checked> Nero 0-0-0</label>
+        </div>
+
+        <textarea class="fen-box" id="fenBoxEditor" rows="2" spellcheck="false"></textarea>
+
+        <div class="btn-row" style="margin-top:14px">
+          <button class="ghost" id="btnBackToCapture2">&larr; Nuova scansione</button>
+          <button class="primary full" id="btnGoAnalyze">Analizza posizione &rarr;</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 4: ANALYZE -->
+    <section class="screen" id="screen-analyze">
+      <div class="card">
+        <div class="board-wrap">
+          <div id="mainBoard"></div>
+          <svg id="arrowLayer"></svg>
+        </div>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="ghost icon-btn" id="btnFlipBoard">&#8635; Gira scacchiera</button>
+          <button class="ghost icon-btn" id="btnUndoMove">&#8630; Annulla mossa</button>
+          <span class="turn-indicator" id="turnIndicator" style="margin-left:auto"></span>
+        </div>
+        <textarea class="fen-box" id="fenBoxAnalyze" rows="2" spellcheck="false"></textarea>
+      </div>
+
+      <div class="card">
+        <div class="btn-row">
+          <span class="field-label" style="margin:0">Analisi Stockfish</span>
+          <span class="badge" id="engineStatus">motore non caricato</span>
+        </div>
+        <div class="depth-row">
+          <span class="field-label" style="margin:0; white-space:nowrap">Tempo</span>
+          <input type="range" id="rangeMovetime" min="300" max="8000" step="100" value="1500">
+          <span class="badge" id="movetimeLabel">1.5s</span>
+        </div>
+        <div class="analysis-controls">
+          <button class="primary" id="btnAnalyze">&#9654; Avvia analisi</button>
+          <button class="danger" id="btnStopAnalyze" style="display:none">&#9632; Ferma</button>
+        </div>
+
+        <div class="eval-bar-wrap">
+          <div class="eval-bar"><div class="eval-bar-fill" id="evalBarFill"></div></div>
+          <span class="eval-text" id="evalText">--</span>
+        </div>
+        <div class="status-line" id="engineLine"></div>
+        <div class="pv-list" id="pvList"></div>
+
+        <div class="btn-row" style="margin-top:12px">
+          <button class="full" id="btnPlayBest" disabled>Gioca mossa migliore</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <button class="full ghost" id="btnNewScan">&#128247; Nuova scansione</button>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+<script src="board-detect.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

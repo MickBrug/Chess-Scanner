@@ -12,7 +12,6 @@ let points = [];
 let dragIndex = -1;
 let squareCanvas = null;
 let detectedCells = null;
-let mlGrid = null;
 let editorBoard = null;
 let mainBoard = null;
 let game = null;
@@ -34,7 +33,6 @@ function init() {
   initEditorBoard();
   showScreen('capture');
   registerServiceWorker();
-  if (typeof PieceClassifier !== 'undefined') PieceClassifier.loadModel().catch(() => {});
 }
 
 function cacheEls() {
@@ -42,7 +40,7 @@ function cacheEls() {
     'errorBanner', 'btnCamera', 'btnGallery', 'inputCamera', 'inputGallery', 'btnManual',
     'photoCanvas', 'overlayCanvas', 'canvasWrap', 'btnResetPoints', 'pointsBadge',
     'btnBackToCapture', 'btnConfirmCorners', 'calibrateHint',
-    'chkFlipRows', 'chkMirror', 'editorBoard', 'btnClearBoard', 'btnStartPos', 'btnRedetect', 'aiStatus',
+    'chkFlipRows', 'chkMirror', 'editorBoard', 'btnClearBoard', 'btnStartPos', 'btnRedetect',
     'selTurn', 'inputEp', 'chkCK', 'chkCQ', 'chkck', 'chkcq', 'fenBoxEditor',
     'btnBackToCapture2', 'btnGoAnalyze',
     'mainBoard', 'arrowLayer', 'btnFlipBoard', 'btnUndoMove', 'turnIndicator', 'fenBoxAnalyze',
@@ -89,8 +87,6 @@ function bindCaptureScreen() {
   els.btnManual.addEventListener('click', () => {
     detectedCells = null;
     squareCanvas = null;
-    mlGrid = null;
-    els.aiStatus.textContent = '';
     editorBoard.clear(false);
     updateFenFromEditor();
     showScreen('correct');
@@ -218,14 +214,12 @@ function bindCalibrateScreen() {
     try {
       squareCanvas = BoardDetect.warpToSquare(els.photoCanvas, corners, 512);
       detectedCells = BoardDetect.analyzeCells(squareCanvas, 8);
-      mlGrid = null;
     } catch (e) {
       showError('Impossibile elaborare l\'immagine: riprova con angoli piu\' precisi.');
       return;
     }
     applyDetectionToEditor();
     showScreen('correct');
-    runAiClassification(squareCanvas);
   });
 }
 
@@ -260,47 +254,10 @@ function cellsToPosition(cells) {
   return pos;
 }
 
-function mlGridToPosition(grid) {
-  const flip = els.chkFlipRows.checked;
-  const mirror = els.chkMirror.checked;
-  const pos = {};
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      const letter = grid[r][c];
-      if (!letter || letter === '1') continue;
-      const rank = flip ? (r + 1) : (8 - r);
-      const fileIdx = mirror ? (7 - c) : c;
-      const square = FILES[fileIdx] + rank;
-      const color = letter === letter.toUpperCase() ? 'w' : 'b';
-      pos[square] = color + letter.toUpperCase();
-    }
-  }
-  return pos;
-}
-
 function applyDetectionToEditor() {
-  if (mlGrid) {
-    editorBoard.position(mlGridToPosition(mlGrid), false);
-    updateFenFromEditor();
-    return;
-  }
   if (!detectedCells) return;
   editorBoard.position(cellsToPosition(detectedCells), false);
   updateFenFromEditor();
-}
-
-function runAiClassification(canvasForThisScan) {
-  if (typeof PieceClassifier === 'undefined') return;
-  els.aiStatus.innerHTML = '<span class="spinner"></span> Riconoscimento del tipo di pezzo con IA in corso&hellip;';
-  PieceClassifier.classifyBoard(canvasForThisScan).then(grid => {
-    if (canvasForThisScan !== squareCanvas) return;
-    mlGrid = grid;
-    applyDetectionToEditor();
-    els.aiStatus.textContent = '\u{1F916} Pezzi riconosciuti automaticamente con IA: controlla e correggi se necessario.';
-  }).catch(() => {
-    if (canvasForThisScan !== squareCanvas) return;
-    els.aiStatus.textContent = 'Riconoscimento IA non disponibile (serve una prima connessione internet per scaricare il modello). Uso la stima base.';
-  });
 }
 
 function buildCastleString() {
@@ -352,10 +309,8 @@ function bindCorrectScreen() {
   els.btnStartPos.addEventListener('click', () => editorBoard.start(false));
   els.btnRedetect.addEventListener('click', () => {
     if (!squareCanvas) { showError('Nessuna foto da ri-analizzare: parti da una nuova scansione.'); return; }
-    mlGrid = null;
     detectedCells = BoardDetect.analyzeCells(squareCanvas, 8);
     applyDetectionToEditor();
-    runAiClassification(squareCanvas);
   });
 
   [els.selTurn, els.inputEp, els.chkCK, els.chkCQ, els.chkck, els.chkcq].forEach(el => {
@@ -499,7 +454,6 @@ function bindAnalyzeScreen() {
     points = [];
     squareCanvas = null;
     detectedCells = null;
-    mlGrid = null;
     showScreen('capture');
   });
 }

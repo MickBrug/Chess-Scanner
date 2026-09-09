@@ -76,8 +76,7 @@
     <!-- STEP 3: CORRECT -->
     <section class="screen" id="screen-correct">
       <div class="card">
-        <p class="hint">Rilevamento automatico completato. <b>Trascina i pezzi corretti</b> dal vassoio sulle caselle per sistemare eventuali errori.</p>
-        <p class="status-line" id="aiStatus"></p>
+        <p class="hint">Rilevamento automatico completato: casella vuota/occupata e colore del pezzo sono stimati dall'immagine. <b>Trascina i pezzi corretti</b> dal vassoio sulle caselle per sistemare il tipo di ogni pezzo (l'algoritmo non riconosce il tipo, solo presenza e colore).</p>
         <div class="toggle-row">
           <label class="check"><input type="checkbox" id="chkFlipRows"> Nero in basso nella foto</label>
           <label class="check"><input type="checkbox" id="chkMirror"> Specchia colonne (a&#8596;h)</label>
@@ -173,9 +172,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@0.12.5"></script>
 <script src="board-detect.js"></script>
-<script src="piece-classifier.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

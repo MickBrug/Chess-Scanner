@@ -106,97 +106,65 @@ const BoardDetect = (() => {
     return Math.sqrt(dr * dr + dg * dg + db * db);
   }
 
-  function estimateBackground(data, cell) {
-    const patch = Math.max(3, Math.round(cell * 0.14));
-    const corners = [
-      [0, 0], [cell - patch, 0], [0, cell - patch], [cell - patch, cell - patch]
-    ];
-    let r = 0, g = 0, b = 0, n = 0;
-    for (const [cx, cy] of corners) {
-      for (let y = cy; y < cy + patch; y++) {
-        for (let x = cx; x < cx + patch; x++) {
-          const idx = (y * cell + x) * 4;
-          r += data[idx]; g += data[idx + 1]; b += data[idx + 2];
-          n++;
-        }
+  function median(values) {
+    const s = [...values].sort((a, b) => a - b);
+    return s[Math.floor(s.length / 2)];
+  }
+
+  // Colore "tipico" della casella: mediana per canale su gran parte della
+  // casella (non solo gli angoli). La mediana ignora naturalmente la minoranza
+  // di pixel occupati da un eventuale pezzo, ed e' molto piu' robusta della
+  // media/angoli quando la casella ha texture o moire' (foto di uno schermo).
+  function estimateBackground(data, cw, ch) {
+    const marginX = Math.round(cw * 0.1);
+    const marginY = Math.round(ch * 0.1);
+    const rs = [], gs = [], bs = [];
+    for (let y = marginY; y < ch - marginY; y++) {
+      for (let x = marginX; x < cw - marginX; x++) {
+        const idx = (y * cw + x) * 4;
+        rs.push(data[idx]); gs.push(data[idx + 1]); bs.push(data[idx + 2]);
       }
     }
-    return [r / n, g / n, b / n];
+    return [median(rs), median(gs), median(bs)];
   }
 
   function toGray(r, g, b) {
     return 0.299 * r + 0.587 * g + 0.114 * b;
   }
 
-  // Sfoca leggermente (media 5x5) i valori di grigio prima di misurare i
-  // bordi: una foto di uno SCHERMO (es. Chess.com fotografato) ha spesso
-  // moire' e rumore di compressione su scala di pochi pixel che verrebbe
-  // scambiato per il bordo di un pezzo. Sfocare lo attenua mantenendo intatta
-  // la sagoma del pezzo, che si estende su una scala molto piu' grande.
-  function blurGray(data, cw, ch) {
-    const gray = new Float32Array(cw * ch);
-    for (let i = 0; i < cw * ch; i++) {
-      const idx = i * 4;
-      gray[i] = toGray(data[idx], data[idx + 1], data[idx + 2]);
-    }
-    const out = new Float32Array(cw * ch);
-    const r = 2;
-    for (let y = 0; y < ch; y++) {
-      for (let x = 0; x < cw; x++) {
-        let sum = 0, n = 0;
-        for (let dy = -r; dy <= r; dy++) {
-          const yy = y + dy;
-          if (yy < 0 || yy >= ch) continue;
-          for (let dx = -r; dx <= r; dx++) {
-            const xx = x + dx;
-            if (xx < 0 || xx >= cw) continue;
-            sum += gray[yy * cw + xx];
-            n++;
-          }
-        }
-        out[y * cw + x] = n ? sum / n : 0;
+  // MAD (scarto assoluto dalla mediana) della luminosita' al centro della
+  // casella: una casella vuota, anche con texture/moire' di uno schermo
+  // fotografato, ha valori di luminosita' concentrati vicino alla mediana
+  // (MAD basso). La sagoma di un pezzo introduce un gruppo di pixel ben
+  // distanti dalla mediana (MAD alto). Molto piu' robusto di un confronto
+  // pixel-per-pixel o di un gradiente ai bordi su una foto reale rumorosa.
+  function madScore(data, cw, ch) {
+    const marginX = Math.round(cw * 0.15);
+    const marginY = Math.round(ch * 0.15);
+    const lums = [];
+    for (let y = marginY; y < ch - marginY; y++) {
+      for (let x = marginX; x < cw - marginX; x++) {
+        const idx = (y * cw + x) * 4;
+        lums.push(toGray(data[idx], data[idx + 1], data[idx + 2]));
       }
     }
-    return out;
+    const med = median(lums);
+    const absdevs = lums.map(v => Math.abs(v - med));
+    return median(absdevs);
   }
 
-  // Misura "quanta struttura/bordo" c'e' al centro della casella (sui valori
-  // sfocati): una casella vuota (anche con luce/ombre non uniformi) varia
-  // lentamente nello spazio, mentre la sagoma di un pezzo crea bordi netti
-  // che questo valore cattura molto meglio di un semplice confronto di
-  // colore con uno sfondo fisso.
-  function gradientScore(data, cw, ch) {
-    const marginX = Math.round(cw * 0.2);
-    const marginY = Math.round(ch * 0.2);
-    const blurred = blurGray(data, cw, ch);
-    let sum = 0, count = 0;
-    for (let y = marginY; y < ch - marginY - 1; y++) {
-      for (let x = marginX; x < cw - marginX - 1; x++) {
-        const i = y * cw + x;
-        const iR = y * cw + x + 1;
-        const iD = (y + 1) * cw + x;
-        sum += Math.abs(blurred[i] - blurred[iR]) + Math.abs(blurred[i] - blurred[iD]);
-        count++;
-      }
-    }
-    return count ? sum / count : 0;
-  }
-
-  // Un pezzo bianco e' quasi sempre piu' chiaro dello sfondo della propria
-  // casella (chiara o scura che sia), un pezzo nero quasi sempre piu' scuro.
-  // Un pezzo bianco ha pero' spesso un contorno scuro (es. le pedine di
-  // Chess.com): quel contorno e' molto piu' "estremo" del riempimento
-  // bianco, quindi pesare per intensita' dello scarto lo farebbe vincere
-  // ingiustamente. Si conta invece quanti pixel (AREA, non intensita') sono
-  // chiaramente piu' chiari e quanti chiaramente piu' scuri dello sfondo:
-  // il riempimento del pezzo copre molta piu' area del suo sottile contorno,
-  // quindi vince sempre il colore del riempimento.
+  // Tra i pixel della casella chiaramente diversi dallo sfondo (il pezzo,
+  // non lo sfondo stesso), la MEDIANA della loro luminosita' rispetto a
+  // quella dello sfondo dice se il pezzo e' bianco o nero. La mediana pesa
+  // per numero di pixel "tipici" del pezzo, senza farsi ingannare da un
+  // sottile contorno scuro anche su un pezzo bianco (es. le pedine di
+  // Chess.com), che sposterebbe troppo una semplice media.
   function pieceColorSignal(data, cw, ch, bg) {
     const marginX = Math.round(cw * 0.14);
     const marginY = Math.round(ch * 0.14);
     const bgLum = toGray(bg[0], bg[1], bg[2]);
     const dists = [];
-    const diffs = [];
+    const lums = [];
     let maxDist = 0;
     for (let y = marginY; y < ch - marginY; y++) {
       for (let x = marginX; x < cw - marginX; x++) {
@@ -204,20 +172,19 @@ const BoardDetect = (() => {
         const lum = toGray(data[idx], data[idx + 1], data[idx + 2]);
         const d = colorDist(data[idx], data[idx + 1], data[idx + 2], bg);
         dists.push(d);
-        diffs.push(lum - bgLum);
+        lums.push(lum);
         if (d > maxDist) maxDist = d;
       }
     }
     if (maxDist < 1) return 0;
     const th = maxDist * 0.15;
-    let darkCount = 0, lightCount = 0;
+    const devLums = [];
     for (let i = 0; i < dists.length; i++) {
-      if (dists[i] <= th) continue;
-      if (diffs[i] >= 0) lightCount++;
-      else darkCount++;
+      if (dists[i] > th) devLums.push(lums[i]);
     }
+    if (devLums.length === 0) return 0;
     // positivo = spinge verso il bianco, negativo = spinge verso il nero
-    return lightCount - darkCount;
+    return median(devLums) - bgLum;
   }
 
   // Soglia di Otsu su un piccolo campione di valori: separa in due gruppi
@@ -253,22 +220,6 @@ const BoardDetect = (() => {
     return min + (threshBin + 0.5) * binWidth;
   }
 
-  // Soglia basata sul salto piu' grande tra valori ordinati: quando alcuni
-  // pezzi hanno un contrasto molto piu' debole di altri (es. alcuni pezzi
-  // scuri su casella scura), Otsu puo' tagliare "dentro" il gruppo occupato
-  // invece che tra vuoto e occupato. Il salto piu' ampio nell'intera
-  // distribuzione ordinata individua meglio quel confine.
-  function maxGapThreshold(values) {
-    const sorted = [...values].sort((a, b) => a - b);
-    let bestGap = -1, bestIdx = 0;
-    for (let i = 1; i < sorted.length; i++) {
-      const gap = sorted[i] - sorted[i - 1];
-      if (gap > bestGap) { bestGap = gap; bestIdx = i; }
-    }
-    if (bestIdx === 0) return sorted[0];
-    return (sorted[bestIdx - 1] + sorted[bestIdx]) / 2;
-  }
-
   function analyzeCells(squareCanvas, gridSize = 8) {
     const size = squareCanvas.width;
     const cell = size / gridSize;
@@ -280,23 +231,16 @@ const BoardDetect = (() => {
         const x0 = Math.round(c * cell), y0 = Math.round(r * cell);
         const cw = Math.round(cell), ch = Math.round(cell);
         const data = ctx.getImageData(x0, y0, cw, ch).data;
-        const grad = gradientScore(data, cw, ch);
-        const bg = estimateBackground(data, cw);
+        const mad = madScore(data, cw, ch);
+        const bg = estimateBackground(data, cw, ch);
         const colorSignal = pieceColorSignal(data, cw, ch, bg);
-        raw.push({ grad, colorSignal });
+        raw.push({ mad, colorSignal });
       }
     }
 
-    // Meglio perdere un pezzo a basso contrasto (si aggiunge in un tocco)
-    // che riempire la scacchiera di caselle vuote scambiate per pezzi (una
-    // foto di uno schermo puo' avere moire'/rumore che genera falsi bordi):
-    // si usa quindi la soglia PIU' alta tra le due stime, con un margine
-    // di sicurezza aggiuntivo.
-    const gradValues = raw.map(x => x.grad);
-    const gradTh = Math.max(otsuThreshold(gradValues), maxGapThreshold(gradValues));
-    const maxGrad = Math.max(...gradValues);
-    const margin = (maxGrad - gradTh) * 0.02;
-    const occMask = gradValues.map(v => v > gradTh + margin);
+    const madValues = raw.map(x => x.mad);
+    const madTh = otsuThreshold(madValues);
+    const occMask = madValues.map(v => v > madTh);
 
     const cells = [];
     let k = 0;
@@ -305,7 +249,7 @@ const BoardDetect = (() => {
       for (let c = 0; c < gridSize; c++) {
         const occupied = occMask[k];
         const color = occupied ? (raw[k].colorSignal >= 0 ? 'w' : 'b') : null;
-        row.push({ occupied, color, grad: raw[k].grad });
+        row.push({ occupied, color, mad: raw[k].mad });
         k++;
       }
       cells.push(row);

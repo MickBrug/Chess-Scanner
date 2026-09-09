@@ -128,23 +128,54 @@ const BoardDetect = (() => {
     return 0.299 * r + 0.587 * g + 0.114 * b;
   }
 
-  // Misura "quanta struttura/bordo" c'e' al centro della casella: una casella
-  // vuota (anche con luce/ombre non uniformi) varia lentamente nello spazio,
-  // mentre la sagoma di un pezzo crea bordi netti che questo valore cattura
-  // molto meglio di un semplice confronto di colore con uno sfondo fisso.
+  // Sfoca leggermente (media 5x5) i valori di grigio prima di misurare i
+  // bordi: una foto di uno SCHERMO (es. Chess.com fotografato) ha spesso
+  // moire' e rumore di compressione su scala di pochi pixel che verrebbe
+  // scambiato per il bordo di un pezzo. Sfocare lo attenua mantenendo intatta
+  // la sagoma del pezzo, che si estende su una scala molto piu' grande.
+  function blurGray(data, cw, ch) {
+    const gray = new Float32Array(cw * ch);
+    for (let i = 0; i < cw * ch; i++) {
+      const idx = i * 4;
+      gray[i] = toGray(data[idx], data[idx + 1], data[idx + 2]);
+    }
+    const out = new Float32Array(cw * ch);
+    const r = 2;
+    for (let y = 0; y < ch; y++) {
+      for (let x = 0; x < cw; x++) {
+        let sum = 0, n = 0;
+        for (let dy = -r; dy <= r; dy++) {
+          const yy = y + dy;
+          if (yy < 0 || yy >= ch) continue;
+          for (let dx = -r; dx <= r; dx++) {
+            const xx = x + dx;
+            if (xx < 0 || xx >= cw) continue;
+            sum += gray[yy * cw + xx];
+            n++;
+          }
+        }
+        out[y * cw + x] = n ? sum / n : 0;
+      }
+    }
+    return out;
+  }
+
+  // Misura "quanta struttura/bordo" c'e' al centro della casella (sui valori
+  // sfocati): una casella vuota (anche con luce/ombre non uniformi) varia
+  // lentamente nello spazio, mentre la sagoma di un pezzo crea bordi netti
+  // che questo valore cattura molto meglio di un semplice confronto di
+  // colore con uno sfondo fisso.
   function gradientScore(data, cw, ch) {
     const marginX = Math.round(cw * 0.2);
     const marginY = Math.round(ch * 0.2);
+    const blurred = blurGray(data, cw, ch);
     let sum = 0, count = 0;
     for (let y = marginY; y < ch - marginY - 1; y++) {
       for (let x = marginX; x < cw - marginX - 1; x++) {
-        const i = (y * cw + x) * 4;
-        const iR = (y * cw + x + 1) * 4;
-        const iD = ((y + 1) * cw + x) * 4;
-        const g = toGray(data[i], data[i + 1], data[i + 2]);
-        const gR = toGray(data[iR], data[iR + 1], data[iR + 2]);
-        const gD = toGray(data[iD], data[iD + 1], data[iD + 2]);
-        sum += Math.abs(g - gR) + Math.abs(g - gD);
+        const i = y * cw + x;
+        const iR = y * cw + x + 1;
+        const iD = (y + 1) * cw + x;
+        sum += Math.abs(blurred[i] - blurred[iR]) + Math.abs(blurred[i] - blurred[iD]);
         count++;
       }
     }
@@ -256,9 +287,16 @@ const BoardDetect = (() => {
       }
     }
 
+    // Meglio perdere un pezzo a basso contrasto (si aggiunge in un tocco)
+    // che riempire la scacchiera di caselle vuote scambiate per pezzi (una
+    // foto di uno schermo puo' avere moire'/rumore che genera falsi bordi):
+    // si usa quindi la soglia PIU' alta tra le due stime, con un margine
+    // di sicurezza aggiuntivo.
     const gradValues = raw.map(x => x.grad);
-    const gradTh = Math.min(otsuThreshold(gradValues), maxGapThreshold(gradValues));
-    const occMask = gradValues.map(v => v > gradTh);
+    const gradTh = Math.max(otsuThreshold(gradValues), maxGapThreshold(gradValues));
+    const maxGrad = Math.max(...gradValues);
+    const margin = (maxGrad - gradTh) * 0.02;
+    const occMask = gradValues.map(v => v > gradTh + margin);
 
     const cells = [];
     let k = 0;

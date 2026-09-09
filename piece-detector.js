@@ -83,7 +83,31 @@ const PieceDetector = (() => {
     const out = output.output0;
     const data = out.data;
     const numDet = out.dims[1];
-    const cell = boardPx / 8;
+
+    // Il tocco manuale dei 4 angoli non e' mai perfettamente preciso (varia
+    // da scan a scan): invece di assumere che la scacchiera occupi sempre la
+    // stessa area fissa dell'immagine 640x640, si usa il riquadro "chessboard"
+    // che il modello stesso individua per ogni foto, e si costruisce la
+    // griglia 8x8 a partire da QUELLO. Molto piu' robusto di una posizione
+    // fissa quando l'inquadratura cambia leggermente da un tentativo all'altro.
+    let boardBox = null;
+    for (let i = 0; i < numDet; i++) {
+      const o = i * 6;
+      if (Math.round(data[o + 5]) !== 0) continue;
+      const conf = data[o + 4];
+      if (!boardBox || conf > boardBox.conf) {
+        boardBox = { x1: data[o], y1: data[o + 1], x2: data[o + 2], y2: data[o + 3], conf };
+      }
+    }
+    let gx0, gy0, cellW, cellH;
+    if (boardBox && boardBox.conf > 0.25) {
+      gx0 = boardBox.x1; gy0 = boardBox.y1;
+      cellW = (boardBox.x2 - boardBox.x1) / 8;
+      cellH = (boardBox.y2 - boardBox.y1) / 8;
+    } else {
+      gx0 = offset; gy0 = offset;
+      cellW = boardPx / 8; cellH = boardPx / 8;
+    }
 
     const bySquare = {};
     for (let i = 0; i < numDet; i++) {
@@ -95,8 +119,8 @@ const PieceDetector = (() => {
       if (!label || label === 'chessboard' || label.startsWith('rank_one') || label.startsWith('last_move')) continue;
       const cx = (data[o] + data[o + 2]) / 2;
       const cy = (data[o + 1] + data[o + 3]) / 2;
-      const col = Math.floor((cx - offset) / cell);
-      const row = Math.floor((cy - offset) / cell);
+      const col = Math.floor((cx - gx0) / cellW);
+      const row = Math.floor((cy - gy0) / cellH);
       if (col < 0 || col > 7 || row < 0 || row > 7) continue;
 
       const [colorPrefix, pieceName] = label.split('_');

@@ -60,6 +60,18 @@ const BoardDetect = (() => {
     return [(m[0] * x + m[1] * y + m[2]) / w, (m[3] * x + m[4] * y + m[5]) / w];
   }
 
+  // Allarga il quadrilatero dei 4 angoli attorno al suo centro. Un tocco
+  // manuale non e' mai pixel-perfetto: se il ritaglio e' troppo aderente,
+  // un tocco anche leggermente troppo "stretto" taglia via un pezzo di
+  // scacchiera per sempre. Con un margine si include sempre tutta la
+  // scacchiera (e un po' di contesto attorno), e chi analizza l'immagine
+  // dopo puo' individuare i bordi precisi da solo.
+  function expandQuad(corners, factor) {
+    const cx = corners.reduce((s, p) => s + p[0], 0) / 4;
+    const cy = corners.reduce((s, p) => s + p[1], 0) / 4;
+    return corners.map(([x, y]) => [cx + (x - cx) * factor, cy + (y - cy) * factor]);
+  }
+
   function warpToSquare(srcCanvas, corners, outSize) {
     const dstPts = [[0, 0], [outSize, 0], [outSize, outSize], [0, outSize]];
     const H = computeHomography(dstPts, corners);
@@ -257,5 +269,5 @@ const BoardDetect = (() => {
     return cells;
   }
 
-  return { computeHomography, invert3x3, applyH, warpToSquare, analyzeCells };
+  return { computeHomography, invert3x3, applyH, expandQuad, warpToSquare, analyzeCells };
 })();

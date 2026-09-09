@@ -11,8 +11,10 @@ let photoImg = null;
 let points = [];
 let dragIndex = -1;
 let squareCanvas = null;
+let lastCorners = null;
 let detectedCells = null;
 let detectionGrid = null;
+let scanGeneration = 0;
 let editorBoard = null;
 let mainBoard = null;
 let game = null;
@@ -90,6 +92,8 @@ function bindCaptureScreen() {
     detectedCells = null;
     detectionGrid = null;
     squareCanvas = null;
+    lastCorners = null;
+    scanGeneration++;
     els.aiStatus.textContent = '';
     editorBoard.clear(false);
     updateFenFromEditor();
@@ -215,17 +219,25 @@ function bindCalibrateScreen() {
   els.btnConfirmCorners.addEventListener('click', () => {
     if (points.length !== 4) return;
     const corners = points.map(p => [p.x, p.y]);
+    let paddedCanvas;
     try {
       squareCanvas = BoardDetect.warpToSquare(els.photoCanvas, corners, 512);
+      lastCorners = corners;
       detectedCells = BoardDetect.analyzeCells(squareCanvas, 8);
       detectionGrid = null;
+      scanGeneration++;
+      // Un tocco manuale non e' mai pixel-perfetto: si ritaglia con un
+      // margine extra per l'IA, cosi' un tocco leggermente troppo "stretto"
+      // non taglia via un pezzo di scacchiera in modo irrecuperabile.
+      const paddedCorners = BoardDetect.expandQuad(corners, 1.3);
+      paddedCanvas = BoardDetect.warpToSquare(els.photoCanvas, paddedCorners, 512);
     } catch (e) {
       showError('Impossibile elaborare l\'immagine: riprova con angoli piu\' precisi.');
       return;
     }
     applyDetectionToEditor();
     showScreen('correct');
-    runAiDetection(squareCanvas);
+    runAiDetection(paddedCanvas);
   });
 }
 
@@ -288,16 +300,17 @@ function applyDetectionToEditor() {
   updateFenFromEditor();
 }
 
-function runAiDetection(canvasForThisScan) {
+function runAiDetection(canvasForAi) {
   if (typeof PieceDetector === 'undefined') return;
+  const generation = scanGeneration;
   els.aiStatus.innerHTML = '<span class="spinner"></span> Riconoscimento pezzi con IA in corso&hellip;';
-  PieceDetector.detectBoard(canvasForThisScan).then(grid => {
-    if (canvasForThisScan !== squareCanvas) return;
+  PieceDetector.detectBoard(canvasForAi).then(grid => {
+    if (generation !== scanGeneration) return;
     detectionGrid = grid;
     applyDetectionToEditor();
     els.aiStatus.textContent = '\u{1F916} Pezzi riconosciuti con IA: controlla e correggi se necessario.';
   }).catch(() => {
-    if (canvasForThisScan !== squareCanvas) return;
+    if (generation !== scanGeneration) return;
     els.aiStatus.textContent = 'Riconoscimento IA non disponibile (serve una prima connessione internet per scaricare il modello). Uso la stima base.';
   });
 }
@@ -352,9 +365,14 @@ function bindCorrectScreen() {
   els.btnRedetect.addEventListener('click', () => {
     if (!squareCanvas) { showError('Nessuna foto da ri-analizzare: parti da una nuova scansione.'); return; }
     detectionGrid = null;
+    scanGeneration++;
     detectedCells = BoardDetect.analyzeCells(squareCanvas, 8);
     applyDetectionToEditor();
-    runAiDetection(squareCanvas);
+    if (lastCorners) {
+      const paddedCorners = BoardDetect.expandQuad(lastCorners, 1.3);
+      const paddedCanvas = BoardDetect.warpToSquare(els.photoCanvas, paddedCorners, 512);
+      runAiDetection(paddedCanvas);
+    }
   });
 
   [els.selTurn, els.inputEp, els.chkCK, els.chkCQ, els.chkck, els.chkcq].forEach(el => {
@@ -497,8 +515,10 @@ function bindAnalyzeScreen() {
     if (analysisRunning) stopAnalysis();
     points = [];
     squareCanvas = null;
+    lastCorners = null;
     detectedCells = null;
     detectionGrid = null;
+    scanGeneration++;
     showScreen('capture');
   });
 }

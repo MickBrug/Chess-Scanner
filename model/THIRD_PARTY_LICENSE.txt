@@ -1,0 +1,16 @@
+Model: yolo26n-chess.onnx
+Source: https://huggingface.co/AndrewSpano/2d-chess-ocr
+Repo:   https://github.com/AndrewSpano/2d-chess-ocr
+Author: Andreas Spanopoulos (2026)
+
+The GitHub repository and Hugging Face model card for this project
+declare an MIT license. The ONNX weights themselves, however, embed
+Ultralytics metadata identifying them as an Ultralytics YOLO model,
+which Ultralytics licenses under AGPL-3.0 (https://ultralytics.com/license)
+unless a commercial license is purchased. This model is a fine-tune of
+an Ultralytics YOLO26 base model, so the AGPL-3.0 terms most likely
+apply to these weights regardless of the MIT label on the surrounding
+repository.
+
+Used here for personal, non-commercial use in a project whose full
+source is itself publicly available.

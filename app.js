@@ -105,6 +105,22 @@ function onFileChosen(evt) {
   const file = evt.target.files && evt.target.files[0];
   evt.target.value = '';
   if (!file) return;
+  // Le foto scattate con la fotocamera portano quasi sempre un tag EXIF di
+  // rotazione (il telefono la mostra dritta ruotandola "virtualmente").
+  // createImageBitmap con imageOrientation:'from-image' applica quella
+  // rotazione ai pixel veri prima che tocchino il canvas: senza, i pixel
+  // su cui lavoriamo potrebbero essere ruotati anche se l'anteprima sembra
+  // corretta, rendendo inutile qualunque tocco sugli angoli.
+  if (window.createImageBitmap) {
+    createImageBitmap(file, { imageOrientation: 'from-image' })
+      .then(bitmap => setupCalibrationImage(bitmap))
+      .catch(() => loadViaImageElement(file));
+  } else {
+    loadViaImageElement(file);
+  }
+}
+
+function loadViaImageElement(file) {
   const reader = new FileReader();
   reader.onload = e => {
     const img = new Image();

@@ -124,35 +124,151 @@ const BoardDetect = (() => {
     return [r / n, g / n, b / n];
   }
 
+  function toGray(r, g, b) {
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+  }
+
+  // Misura "quanta struttura/bordo" c'e' al centro della casella: una casella
+  // vuota (anche con luce/ombre non uniformi) varia lentamente nello spazio,
+  // mentre la sagoma di un pezzo crea bordi netti che questo valore cattura
+  // molto meglio di un semplice confronto di colore con uno sfondo fisso.
+  function gradientScore(data, cw, ch) {
+    const marginX = Math.round(cw * 0.2);
+    const marginY = Math.round(ch * 0.2);
+    let sum = 0, count = 0;
+    for (let y = marginY; y < ch - marginY - 1; y++) {
+      for (let x = marginX; x < cw - marginX - 1; x++) {
+        const i = (y * cw + x) * 4;
+        const iR = (y * cw + x + 1) * 4;
+        const iD = ((y + 1) * cw + x) * 4;
+        const g = toGray(data[i], data[i + 1], data[i + 2]);
+        const gR = toGray(data[iR], data[iR + 1], data[iR + 2]);
+        const gD = toGray(data[iD], data[iD + 1], data[iD + 2]);
+        sum += Math.abs(g - gR) + Math.abs(g - gD);
+        count++;
+      }
+    }
+    return count ? sum / count : 0;
+  }
+
+  // Un pezzo bianco e' quasi sempre piu' chiaro dello sfondo della propria
+  // casella (chiara o scura che sia), un pezzo nero quasi sempre piu' scuro.
+  // Un pezzo bianco ha pero' spesso un contorno scuro (es. le pedine di
+  // Chess.com): quel contorno e' molto piu' "estremo" del riempimento
+  // bianco, quindi pesare per intensita' dello scarto lo farebbe vincere
+  // ingiustamente. Si conta invece quanti pixel (AREA, non intensita') sono
+  // chiaramente piu' chiari e quanti chiaramente piu' scuri dello sfondo:
+  // il riempimento del pezzo copre molta piu' area del suo sottile contorno,
+  // quindi vince sempre il colore del riempimento.
+  function pieceColorSignal(data, cw, ch, bg) {
+    const marginX = Math.round(cw * 0.14);
+    const marginY = Math.round(ch * 0.14);
+    const bgLum = toGray(bg[0], bg[1], bg[2]);
+    const dists = [];
+    const diffs = [];
+    let maxDist = 0;
+    for (let y = marginY; y < ch - marginY; y++) {
+      for (let x = marginX; x < cw - marginX; x++) {
+        const idx = (y * cw + x) * 4;
+        const lum = toGray(data[idx], data[idx + 1], data[idx + 2]);
+        const d = colorDist(data[idx], data[idx + 1], data[idx + 2], bg);
+        dists.push(d);
+        diffs.push(lum - bgLum);
+        if (d > maxDist) maxDist = d;
+      }
+    }
+    if (maxDist < 1) return 0;
+    const th = maxDist * 0.15;
+    let darkCount = 0, lightCount = 0;
+    for (let i = 0; i < dists.length; i++) {
+      if (dists[i] <= th) continue;
+      if (diffs[i] >= 0) lightCount++;
+      else darkCount++;
+    }
+    // positivo = spinge verso il bianco, negativo = spinge verso il nero
+    return lightCount - darkCount;
+  }
+
+  // Soglia di Otsu su un piccolo campione di valori: separa in due gruppi
+  // (es. "vuote" vs "occupate") massimizzando la varianza tra i due gruppi,
+  // invece di usare un numero fisso che non si adatta a foto diverse.
+  function otsuThreshold(values) {
+    if (values.length === 0) return 0;
+    const min = Math.min(...values), max = Math.max(...values);
+    if (max - min < 1e-6) return max;
+    const bins = 32;
+    const hist = new Array(bins).fill(0);
+    const binWidth = (max - min) / bins;
+    values.forEach(v => {
+      let b = Math.floor((v - min) / binWidth);
+      if (b >= bins) b = bins - 1;
+      hist[b]++;
+    });
+    const total = values.length;
+    let sumAll = 0;
+    for (let i = 0; i < bins; i++) sumAll += i * hist[i];
+    let sumB = 0, wB = 0, maxVar = -1, threshBin = 0;
+    for (let i = 0; i < bins; i++) {
+      wB += hist[i];
+      if (wB === 0) continue;
+      const wF = total - wB;
+      if (wF === 0) break;
+      sumB += i * hist[i];
+      const mB = sumB / wB;
+      const mF = (sumAll - sumB) / wF;
+      const varBetween = wB * wF * (mB - mF) * (mB - mF);
+      if (varBetween > maxVar) { maxVar = varBetween; threshBin = i; }
+    }
+    return min + (threshBin + 0.5) * binWidth;
+  }
+
+  // Soglia basata sul salto piu' grande tra valori ordinati: quando alcuni
+  // pezzi hanno un contrasto molto piu' debole di altri (es. alcuni pezzi
+  // scuri su casella scura), Otsu puo' tagliare "dentro" il gruppo occupato
+  // invece che tra vuoto e occupato. Il salto piu' ampio nell'intera
+  // distribuzione ordinata individua meglio quel confine.
+  function maxGapThreshold(values) {
+    const sorted = [...values].sort((a, b) => a - b);
+    let bestGap = -1, bestIdx = 0;
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = sorted[i] - sorted[i - 1];
+      if (gap > bestGap) { bestGap = gap; bestIdx = i; }
+    }
+    if (bestIdx === 0) return sorted[0];
+    return (sorted[bestIdx - 1] + sorted[bestIdx]) / 2;
+  }
+
   function analyzeCells(squareCanvas, gridSize = 8) {
     const size = squareCanvas.width;
     const cell = size / gridSize;
     const ctx = squareCanvas.getContext('2d');
-    const cells = [];
+
+    const raw = [];
     for (let r = 0; r < gridSize; r++) {
-      const row = [];
       for (let c = 0; c < gridSize; c++) {
         const x0 = Math.round(c * cell), y0 = Math.round(r * cell);
         const cw = Math.round(cell), ch = Math.round(cell);
         const data = ctx.getImageData(x0, y0, cw, ch).data;
+        const grad = gradientScore(data, cw, ch);
         const bg = estimateBackground(data, cw);
-        const margin = Math.round(cw * 0.14);
-        let fgCount = 0, total = 0, lumSum = 0;
-        for (let y = margin; y < ch - margin; y++) {
-          for (let x = margin; x < cw - margin; x++) {
-            const idx = (y * cw + x) * 4;
-            const rr = data[idx], gg = data[idx + 1], bb = data[idx + 2];
-            total++;
-            if (colorDist(rr, gg, bb, bg) > 42) {
-              fgCount++;
-              lumSum += 0.299 * rr + 0.587 * gg + 0.114 * bb;
-            }
-          }
-        }
-        const ratio = total ? fgCount / total : 0;
-        const occupied = ratio > 0.11;
-        const color = occupied ? (lumSum / fgCount > 120 ? 'w' : 'b') : null;
-        row.push({ occupied, color, ratio });
+        const colorSignal = pieceColorSignal(data, cw, ch, bg);
+        raw.push({ grad, colorSignal });
+      }
+    }
+
+    const gradValues = raw.map(x => x.grad);
+    const gradTh = Math.min(otsuThreshold(gradValues), maxGapThreshold(gradValues));
+    const occMask = gradValues.map(v => v > gradTh);
+
+    const cells = [];
+    let k = 0;
+    for (let r = 0; r < gridSize; r++) {
+      const row = [];
+      for (let c = 0; c < gridSize; c++) {
+        const occupied = occMask[k];
+        const color = occupied ? (raw[k].colorSignal >= 0 ? 'w' : 'b') : null;
+        row.push({ occupied, color, grad: raw[k].grad });
+        k++;
       }
       cells.push(row);
     }

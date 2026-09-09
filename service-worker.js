@@ -1,5 +1,5 @@
-const APP_CACHE = 'chessfen-app-v2';
-const LIB_CACHE = 'chessfen-libs-v2';
+const APP_CACHE = 'chessfen-app-v3';
+const LIB_CACHE = 'chessfen-libs-v3';
 
 const APP_FILES = [
   './',

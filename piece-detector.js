@@ -22,6 +22,7 @@ const PieceDetector = (() => {
   const INPUT_SIZE = 640;
   const BOARD_FRACTION = 0.86; // la scacchiera riempie l'86% del riquadro 640x640, il resto e' margine
   const CONF_THRESHOLD = 0.3;
+  const AUTO_DETECT_MARGIN = 0.25; // margine attorno al riquadro individuato al 1o passaggio
 
   let session = null;
   let loadingPromise = null;
@@ -53,6 +54,75 @@ const PieceDetector = (() => {
     ctx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
     ctx.drawImage(squareCanvas, 0, 0, squareCanvas.width, squareCanvas.height, offset, offset, boardPx, boardPx);
     return { canvas, offset, boardPx };
+  }
+
+  // Come letterbox(), ma per un'immagine di qualunque proporzione (una foto
+  // intera, non ancora ritagliata): scala mantenendo le proporzioni e centra
+  // dentro il riquadro 640x640, senza deformare l'immagine.
+  function letterboxGeneric(srcCanvas, size) {
+    const scale = Math.min(size / srcCanvas.width, size / srcCanvas.height);
+    const dw = Math.round(srcCanvas.width * scale);
+    const dh = Math.round(srcCanvas.height * scale);
+    const ox = Math.round((size - dw) / 2);
+    const oy = Math.round((size - dh) / 2);
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#727272';
+    ctx.fillRect(0, 0, size, size);
+    ctx.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, ox, oy, dw, dh);
+    return { canvas, scale, ox, oy };
+  }
+
+  // Individua automaticamente il riquadro della scacchiera in una foto
+  // intera (il modello lo rileva gia' come una delle sue classi). Restituisce
+  // le coordinate nello spazio della foto originale, o null se non trovata.
+  async function findBoardBbox(srcCanvas) {
+    if (!session) await loadModel();
+    const { canvas, scale, ox, oy } = letterboxGeneric(srcCanvas, INPUT_SIZE);
+    const tensor = toInputTensor(canvas);
+    const output = await session.run({ images: tensor });
+    const data = output.output0.data;
+    const numDet = output.output0.dims[1];
+    let best = null;
+    for (let i = 0; i < numDet; i++) {
+      const o = i * 6;
+      if (Math.round(data[o + 5]) !== 0) continue;
+      const conf = data[o + 4];
+      if (!best || conf > best.conf) best = { x1: data[o], y1: data[o + 1], x2: data[o + 2], y2: data[o + 3], conf };
+    }
+    if (!best) return null;
+    return {
+      x1: (best.x1 - ox) / scale, y1: (best.y1 - oy) / scale,
+      x2: (best.x2 - ox) / scale, y2: (best.y2 - oy) / scale,
+      conf: best.conf
+    };
+  }
+
+  // Pipeline completa, senza alcun tocco manuale: individua la scacchiera
+  // nella foto intera, ritaglia con margine attorno al riquadro trovato,
+  // poi rilancia il riconoscimento (occupazione, tipo, colore) su quel
+  // ritaglio ravvicinato, dove ogni casella occupa una porzione maggiore
+  // dell'immagine e quindi si riconosce meglio. Restituisce null se non
+  // viene individuata una scacchiera con confidenza sufficiente.
+  async function autoDetect(photoCanvas) {
+    const bbox = await findBoardBbox(photoCanvas);
+    if (!bbox || bbox.conf < 0.3) return null;
+    const bw = bbox.x2 - bbox.x1, bh = bbox.y2 - bbox.y1;
+    const mX = bw * AUTO_DETECT_MARGIN, mY = bh * AUTO_DETECT_MARGIN;
+    const cropX0 = Math.max(0, bbox.x1 - mX);
+    const cropY0 = Math.max(0, bbox.y1 - mY);
+    const cropX1 = Math.min(photoCanvas.width, bbox.x2 + mX);
+    const cropY1 = Math.min(photoCanvas.height, bbox.y2 + mY);
+    const square = document.createElement('canvas');
+    square.width = 512;
+    square.height = 512;
+    square.getContext('2d').drawImage(
+      photoCanvas, cropX0, cropY0, cropX1 - cropX0, cropY1 - cropY0, 0, 0, 512, 512
+    );
+    const grid = await detectBoard(square);
+    return { square, grid, boardConf: bbox.conf };
   }
 
   function toInputTensor(canvas) {
@@ -141,5 +211,5 @@ const PieceDetector = (() => {
     return grid;
   }
 
-  return { loadModel, isReady, detectBoard };
+  return { loadModel, isReady, detectBoard, findBoardBbox, autoDetect };
 })();

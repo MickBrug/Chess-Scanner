@@ -43,7 +43,7 @@ function cacheEls() {
   const ids = [
     'errorBanner', 'btnCamera', 'btnGallery', 'inputCamera', 'inputGallery', 'btnManual',
     'photoCanvas', 'overlayCanvas', 'canvasWrap', 'btnResetPoints', 'pointsBadge',
-    'btnBackToCapture', 'btnConfirmCorners', 'calibrateHint',
+    'btnBackToCapture', 'btnConfirmCorners', 'calibrateHint', 'manualCalibControls',
     'chkFlipRows', 'chkMirror', 'editorBoard', 'btnClearBoard', 'btnStartPos', 'btnRedetect', 'aiStatus',
     'selTurn', 'inputEp', 'chkCK', 'chkCQ', 'chkck', 'chkcq', 'fenBoxEditor',
     'btnBackToCapture2', 'btnGoAnalyze',
@@ -148,7 +148,75 @@ function setupCalibrationImage(img) {
   redrawOverlay();
   els.pointsBadge.textContent = '0 / 4 punti';
   els.btnConfirmCorners.disabled = true;
+  startAutoDetectFlow();
+}
+
+// Individua la scacchiera e riconosce i pezzi, senza alcun tocco manuale.
+// Restituisce il risultato di PieceDetector.autoDetect(), o null se non
+// c'e' abbastanza confidenza / il modello non e' disponibile. Non tocca
+// la UI: le due funzioni sotto la usano in contesti diversi.
+async function runAutoDetect(generation) {
+  if (typeof PieceDetector === 'undefined') return null;
+  let result = null;
+  try {
+    result = await PieceDetector.autoDetect(els.photoCanvas);
+  } catch (e) {
+    result = null;
+  }
+  if (generation !== scanGeneration) return undefined; // scansione superata nel frattempo
+  return result;
+}
+
+function applyAutoDetectResult(result) {
+  squareCanvas = result.square;
+  lastCorners = null;
+  detectionGrid = result.grid;
+  detectedCells = BoardDetect.analyzeCells(squareCanvas, 8);
+  applyDetectionToEditor();
+  els.aiStatus.textContent = '\u{1F916} Scacchiera individuata e pezzi riconosciuti automaticamente: controlla e correggi se necessario.';
+}
+
+// Percorso principale, alla prima scansione di una foto: mostra lo stato di
+// caricamento sulla schermata di calibrazione e, se non si trova una
+// scacchiera con confidenza sufficiente (foto insolita, scacchiera non
+// standard...), rivela il tocco manuale dei 4 angoli come riserva.
+async function startAutoDetectFlow() {
+  scanGeneration++;
+  const generation = scanGeneration;
+  els.manualCalibControls.hidden = true;
+  els.calibrateHint.innerHTML = '<span class="spinner"></span> Rilevamento automatico della scacchiera in corso&hellip;';
   showScreen('calibrate');
+
+  const result = await runAutoDetect(generation);
+  if (result === undefined) return;
+
+  if (result) {
+    applyAutoDetectResult(result);
+    showScreen('correct');
+  } else {
+    revealManualCalibration();
+  }
+}
+
+function revealManualCalibration() {
+  els.calibrateHint.innerHTML = 'Non sono riuscito a individuare la scacchiera da solo. Tocca i 4 angoli nell\'immagine, in quest\'ordine: <b>alto-sinistra &rarr; alto-destra &rarr; basso-destra &rarr; basso-sinistra</b>.';
+  els.manualCalibControls.hidden = false;
+}
+
+// Richiamato da "Ri-rileva" sulla schermata di correzione quando la
+// scansione originale era automatica: ripete il rilevamento senza
+// abbandonare la schermata corrente.
+async function redetectAuto() {
+  scanGeneration++;
+  const generation = scanGeneration;
+  els.aiStatus.innerHTML = '<span class="spinner"></span> Rilevamento automatico in corso&hellip;';
+  const result = await runAutoDetect(generation);
+  if (result === undefined) return;
+  if (result) {
+    applyAutoDetectResult(result);
+  } else {
+    els.aiStatus.textContent = 'Scacchiera non individuata. Prova con "Nuova scansione": se non si trova di nuovo, potrai toccare i 4 angoli a mano.';
+  }
 }
 
 function getCanvasPos(evt, canvas) {
@@ -230,7 +298,7 @@ function bindCalibrateScreen() {
     els.btnConfirmCorners.disabled = true;
   });
 
-  els.btnBackToCapture.addEventListener('click', () => showScreen('capture'));
+  els.btnBackToCapture.addEventListener('click', () => { scanGeneration++; showScreen('capture'); });
 
   els.btnConfirmCorners.addEventListener('click', () => {
     if (points.length !== 4) return;
@@ -380,14 +448,18 @@ function bindCorrectScreen() {
   els.btnStartPos.addEventListener('click', () => editorBoard.start(false));
   els.btnRedetect.addEventListener('click', () => {
     if (!squareCanvas) { showError('Nessuna foto da ri-analizzare: parti da una nuova scansione.'); return; }
-    detectionGrid = null;
-    scanGeneration++;
-    detectedCells = BoardDetect.analyzeCells(squareCanvas, 8);
-    applyDetectionToEditor();
     if (lastCorners) {
+      // Scansione da tocco manuale: ripete l'analisi sugli stessi angoli.
+      detectionGrid = null;
+      scanGeneration++;
+      detectedCells = BoardDetect.analyzeCells(squareCanvas, 8);
+      applyDetectionToEditor();
       const paddedCorners = BoardDetect.expandQuad(lastCorners, 1.3);
       const paddedCanvas = BoardDetect.warpToSquare(els.photoCanvas, paddedCorners, 512);
       runAiDetection(paddedCanvas);
+    } else {
+      // Scansione automatica: ripete l'intero rilevamento dalla foto originale.
+      redetectAuto();
     }
   });
 

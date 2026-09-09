@@ -34,7 +34,7 @@
     <!-- STEP 1: CAPTURE -->
     <section class="screen" id="screen-capture">
       <div class="card">
-        <p class="hint">Scatta una foto alla scacchiera (dall'alto, ben illuminata) oppure carica uno screenshot/immagine da Chess.com. Poi allinea i 4 angoli per estrarre automaticamente il FEN.</p>
+        <p class="hint">Scatta una foto alla scacchiera (dall'alto, ben illuminata) oppure carica uno screenshot/immagine da Chess.com. La scacchiera viene individuata e riconosciuta in automatico.</p>
         <div class="capture-actions">
           <button class="big-action primary" id="btnCamera">
             <span class="emoji">&#128247;</span>
@@ -62,13 +62,15 @@
           <canvas id="photoCanvas"></canvas>
           <canvas id="overlayCanvas"></canvas>
         </div>
-        <div class="corner-toolbar">
-          <button class="ghost icon-btn" id="btnResetPoints">&#8635; Azzera punti</button>
-          <span class="badge" id="pointsBadge">0 / 4 punti</span>
-        </div>
-        <div class="btn-row" style="margin-top:14px">
-          <button class="ghost" id="btnBackToCapture">&larr; Indietro</button>
-          <button class="primary full" id="btnConfirmCorners" disabled>Estrai posizione &rarr;</button>
+        <div id="manualCalibControls" hidden>
+          <div class="corner-toolbar">
+            <button class="ghost icon-btn" id="btnResetPoints">&#8635; Azzera punti</button>
+            <span class="badge" id="pointsBadge">0 / 4 punti</span>
+          </div>
+          <div class="btn-row" style="margin-top:14px">
+            <button class="ghost" id="btnBackToCapture">&larr; Indietro</button>
+            <button class="primary full" id="btnConfirmCorners" disabled>Estrai posizione &rarr;</button>
+          </div>
         </div>
       </div>
     </section>

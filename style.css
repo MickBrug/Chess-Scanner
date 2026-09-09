@@ -170,12 +170,18 @@ button.icon-btn { padding: 12px; }
 
 .capture-actions { display: flex; gap: 12px; }
 
-canvas#photoCanvas, canvas#overlayCanvas {
+canvas#photoCanvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+canvas#overlayCanvas {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
-  height: auto;
+  height: 100%;
   touch-action: none;
 }
 

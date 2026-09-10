@@ -17,6 +17,7 @@ let detectionGrid = null;
 let scanGeneration = 0;
 let editorBoard = null;
 let mainBoard = null;
+let editAnalyzeBoard = null;
 let game = null;
 
 let engine = null;
@@ -48,9 +49,10 @@ function cacheEls() {
     'chkFlipRows', 'chkMirror', 'editorBoard', 'btnClearBoard', 'btnStartPos', 'btnRedetect', 'aiStatus',
     'selTurn', 'inputEp', 'chkCK', 'chkCQ', 'chkck', 'chkcq', 'fenBoxEditor',
     'btnBackToCapture2', 'btnGoAnalyze',
-    'mainBoard', 'arrowLayer', 'btnFlipBoard', 'btnUndoMove', 'turnIndicator', 'fenBoxAnalyze',
+    'analyzeMain', 'mainBoard', 'arrowLayer', 'btnFlipBoard', 'btnEditBoard', 'btnUndoMove', 'turnIndicator', 'fenBoxAnalyze',
     'engineStatus', 'selMultiPv', 'rangeMovetime', 'movetimeLabel', 'btnAnalyze', 'btnStopAnalyze',
-    'evalBarFill', 'evalText', 'pvPanel', 'btnPlayBest', 'btnNewScan'
+    'evalBarFill', 'evalText', 'pvPanel', 'btnPlayBest', 'btnNewScan',
+    'editBoardView', 'editAnalyzeBoard', 'btnEditFlipOrientation', 'selEditTurn', 'btnCancelEdit', 'btnSaveEdit'
   ];
   ids.forEach(id => { els[id] = document.getElementById(id); });
 }
@@ -337,7 +339,11 @@ function initEditorBoard() {
     pieceTheme: PIECE_THEME,
     onChange: (oldPos, newPos) => updateFenFromEditor(newPos)
   });
-  window.addEventListener('resize', () => { if (editorBoard) editorBoard.resize(); if (mainBoard) { mainBoard.resize(); drawArrowIfAny(); } });
+  window.addEventListener('resize', () => {
+    if (editorBoard) editorBoard.resize();
+    if (mainBoard) { mainBoard.resize(); drawArrowIfAny(); }
+    if (editAnalyzeBoard) editAnalyzeBoard.resize();
+  });
 }
 
 function cellsToPosition(cells) {
@@ -522,6 +528,8 @@ function goToAnalyzeScreen(fen) {
   } else {
     mainBoard.position(fen, false);
   }
+  els.editBoardView.hidden = true;
+  els.analyzeMain.hidden = false;
   els.fenBoxAnalyze.value = fen;
   bestMoveUci = null;
   els.btnPlayBest.disabled = true;
@@ -530,6 +538,7 @@ function goToAnalyzeScreen(fen) {
   pvLines = [];
   renderPvLines();
   updateTurnIndicator();
+  setEditButtonEnabled();
   showScreen('analyze');
   setTimeout(() => mainBoard.resize(), 60);
 }
@@ -562,11 +571,99 @@ function afterPositionChanged() {
 
 function updateTurnIndicator() {
   const w = game.turn() === 'w';
-  let extra = '';
-  if (game.in_checkmate()) extra = ' · Scacco matto';
-  else if (game.in_stalemate()) extra = ' · Stallo';
-  else if (game.in_check()) extra = ' · Scacco';
-  els.turnIndicator.innerHTML = `<span class="dot-${w ? 'white' : 'black'}"></span> ${w ? 'Bianco' : 'Nero'} muove${extra}`;
+  let title = w ? 'Bianco muove' : 'Nero muove';
+  if (game.in_checkmate()) title += ' · Scacco matto';
+  else if (game.in_stalemate()) title += ' · Stallo';
+  else if (game.in_check()) title += ' · Scacco';
+  els.turnIndicator.innerHTML = `<span class="dot-${w ? 'white' : 'black'}"></span>`;
+  els.turnIndicator.title = title;
+}
+
+function setEditButtonEnabled() {
+  els.btnEditBoard.disabled = analysisRunning;
+}
+
+/* ---------- modifica scacchiera (ad analisi ferma) ---------- */
+
+// Ruota una casella di 180 gradi (a1<->h8, e4<->d5, ...): usata da
+// "Capovolgi" per reinterpretare l'orientamento a1/h8 senza spostare i pezzi.
+function rotateSquare(sq) {
+  const file = sq.charCodeAt(0) - 97;
+  const rank = parseInt(sq[1], 10);
+  return FILES[7 - file] + (9 - rank);
+}
+
+function rotatePosition180(pos) {
+  const out = {};
+  Object.keys(pos).forEach(sq => { out[rotateSquare(sq)] = pos[sq]; });
+  return out;
+}
+
+// L'arrocco resta disponibile solo se lo era gia' prima della modifica E
+// re/torre sono ancora sulla casella di partenza dopo la correzione manuale.
+function computeCastleRights(pos, prevGame) {
+  const prevCastle = prevGame.fen().split(' ')[2] || '-';
+  let s = '';
+  if (prevCastle.includes('K') && pos.e1 === 'wK' && pos.h1 === 'wR') s += 'K';
+  if (prevCastle.includes('Q') && pos.e1 === 'wK' && pos.a1 === 'wR') s += 'Q';
+  if (prevCastle.includes('k') && pos.e8 === 'bK' && pos.h8 === 'bR') s += 'k';
+  if (prevCastle.includes('q') && pos.e8 === 'bK' && pos.a8 === 'bR') s += 'q';
+  return s || '-';
+}
+
+function openEditBoard() {
+  if (analysisRunning) return;
+  if (!editAnalyzeBoard) {
+    editAnalyzeBoard = Chessboard('editAnalyzeBoard', {
+      draggable: true,
+      sparePieces: true,
+      dropOffBoard: 'trash',
+      position: {},
+      pieceTheme: PIECE_THEME
+    });
+  }
+  editAnalyzeBoard.orientation(mainBoard.orientation());
+  editAnalyzeBoard.position(mainBoard.position(), false);
+  els.selEditTurn.value = game.turn();
+  els.analyzeMain.hidden = true;
+  els.editBoardView.hidden = false;
+  setTimeout(() => editAnalyzeBoard.resize(), 0);
+}
+
+function closeEditBoard() {
+  els.editBoardView.hidden = true;
+  els.analyzeMain.hidden = false;
+  setTimeout(() => { mainBoard.resize(); drawArrowIfAny(); }, 0);
+}
+
+function bindEditBoardScreen() {
+  els.btnEditBoard.addEventListener('click', openEditBoard);
+
+  els.btnEditFlipOrientation.addEventListener('click', () => {
+    const rotated = rotatePosition180(editAnalyzeBoard.position());
+    editAnalyzeBoard.position(rotated, false);
+    editAnalyzeBoard.orientation(editAnalyzeBoard.orientation() === 'white' ? 'black' : 'white');
+  });
+
+  els.btnCancelEdit.addEventListener('click', closeEditBoard);
+
+  els.btnSaveEdit.addEventListener('click', () => {
+    const pos = editAnalyzeBoard.position();
+    const turn = els.selEditTurn.value;
+    const castle = computeCastleRights(pos, game);
+    const fen = boardPositionToFEN(pos, turn, castle, '-');
+    const tester = new Chess();
+    if (!tester.load(fen)) {
+      showError('Posizione non valida: verifica che ci sia esattamente un re bianco e un re nero e che la posizione sia legale.');
+      return;
+    }
+    hideError();
+    game = new Chess(fen);
+    if (editAnalyzeBoard.orientation() !== mainBoard.orientation()) mainBoard.flip();
+    mainBoard.position(fen, false);
+    closeEditBoard();
+    afterPositionChanged();
+  });
 }
 
 function bindAnalyzeScreen() {
@@ -578,6 +675,8 @@ function bindAnalyzeScreen() {
     mainBoard.position(game.fen());
     afterPositionChanged();
   });
+
+  bindEditBoardScreen();
 
   els.fenBoxAnalyze.addEventListener('change', () => {
     const fen = els.fenBoxAnalyze.value.trim();
@@ -633,6 +732,7 @@ function initEngine() {
     analysisRunning = false;
     els.btnAnalyze.style.display = '';
     els.btnStopAnalyze.style.display = 'none';
+    setEditButtonEnabled();
   };
   engine.postMessage('uci');
 }
@@ -768,6 +868,7 @@ function onBestMove(line) {
     els.btnStopAnalyze.style.display = 'none';
     els.engineStatus.textContent = 'fermato';
   }
+  setEditButtonEnabled();
 }
 
 function startAnalysis() {
@@ -784,6 +885,7 @@ function startAnalysis() {
   els.btnAnalyze.style.display = 'none';
   els.btnStopAnalyze.style.display = '';
   els.engineStatus.innerHTML = '<span class="spinner"></span> analisi in corso';
+  setEditButtonEnabled();
 
   const movetime = parseInt(els.rangeMovetime.value, 10);
   const multipv = parseInt(els.selMultiPv.value, 10) || 3;
@@ -811,6 +913,7 @@ function stopAnalysis() {
   els.btnAnalyze.style.display = '';
   els.btnStopAnalyze.style.display = 'none';
   els.engineStatus.textContent = 'fermato';
+  setEditButtonEnabled();
 }
 
 /* ---------- frecce sulla scacchiera ---------- */

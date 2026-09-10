@@ -140,6 +140,11 @@ button.primary:disabled {
   cursor: not-allowed;
 }
 
+button:disabled:not(.primary) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 button.ghost {
   background: transparent;
 }
@@ -219,7 +224,7 @@ label.check {
 
 label.check input { width: 17px; height: 17px; accent-color: var(--accent); }
 
-#editorBoard, #mainBoard { width: 100%; max-width: 480px; margin: 0 auto; }
+#editorBoard, #mainBoard, #editAnalyzeBoard { width: 100%; max-width: 480px; margin: 0 auto; }
 
 /* Un trascinamento che parte sulla scacchiera non deve mai far scorrere la
    pagina (mobile Android): lo scroll resta libero altrove. */
@@ -407,6 +412,20 @@ select, input[type="text"] {
 }
 .dot-white { background: var(--white-piece); }
 .dot-black { background: var(--black-piece); }
+
+.btn-grid-2x2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.turn-dot-cell {
+  cursor: default;
+}
+.turn-dot-cell .dot-white, .turn-dot-cell .dot-black {
+  width: 16px;
+  height: 16px;
+}
 
 .error-banner {
   background: rgba(226, 85, 90, 0.12);

@@ -226,9 +226,12 @@ label.check input { width: 17px; height: 17px; accent-color: var(--accent); }
 
 #editorBoard, #mainBoard, #editAnalyzeBoard { width: 100%; max-width: 480px; margin: 0 auto; }
 
-/* Un trascinamento che parte sulla scacchiera non deve mai far scorrere la
-   pagina (mobile Android): lo scroll resta libero altrove. */
-#mainBoard, #mainBoard * { touch-action: none; }
+/* Un trascinamento che parte sulla scacchiera (o sui pezzi di riserva degli
+   editor) non deve mai far scorrere la pagina (mobile Android): lo scroll
+   resta libero altrove. Copre tutte le scacchiere con pezzi trascinabili,
+   inclusa quella della modifica in-analisi. */
+#editorBoard, #mainBoard, #editAnalyzeBoard,
+#editorBoard *, #mainBoard *, #editAnalyzeBoard * { touch-action: none; }
 
 .spare-label {
   text-align: center;
@@ -438,6 +441,23 @@ select, input[type="text"] {
   display: none;
 }
 .error-banner.visible { display: block; }
+
+.gameover-banner {
+  background: rgba(226, 85, 90, 0.12);
+  border: 1px solid var(--danger);
+  color: #ff9ea1;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  display: none;
+}
+.gameover-banner.visible { display: block; }
+
+#mainBoard .square-selected {
+  box-shadow: inset 0 0 0 3px var(--accent);
+}
 
 .hidden-input { display: none; }
 

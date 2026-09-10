@@ -26,6 +26,8 @@ let analysisRunning = false;
 let bestMoveUci = null;
 let pvLines = [];
 let errorTimer = null;
+let selectedSquare = null;
+let tapStart = null;
 
 document.addEventListener('DOMContentLoaded', init);
 
@@ -49,7 +51,7 @@ function cacheEls() {
     'chkFlipRows', 'chkMirror', 'editorBoard', 'btnClearBoard', 'btnStartPos', 'btnRedetect', 'aiStatus',
     'selTurn', 'inputEp', 'chkCK', 'chkCQ', 'chkck', 'chkcq', 'fenBoxEditor',
     'btnBackToCapture2', 'btnGoAnalyze',
-    'analyzeMain', 'mainBoard', 'arrowLayer', 'btnFlipBoard', 'btnEditBoard', 'btnUndoMove', 'turnIndicator', 'fenBoxAnalyze',
+    'analyzeMain', 'mainBoard', 'arrowLayer', 'btnFlipBoard', 'btnEditBoard', 'btnUndoMove', 'turnIndicator', 'gameOverBanner', 'fenBoxAnalyze',
     'engineStatus', 'selMultiPv', 'rangeMovetime', 'movetimeLabel', 'btnAnalyze', 'btnStopAnalyze',
     'evalBarFill', 'evalText', 'pvPanel', 'btnPlayBest', 'btnNewScan',
     'editBoardView', 'editAnalyzeBoard', 'btnEditFlipOrientation', 'selEditTurn', 'btnCancelEdit', 'btnSaveEdit'
@@ -534,10 +536,12 @@ function goToAnalyzeScreen(fen) {
   bestMoveUci = null;
   els.btnPlayBest.disabled = true;
   clearArrow();
+  clearSelection();
   resetEvalDisplay();
   pvLines = [];
   renderPvLines();
   updateTurnIndicator();
+  updateGameOverState();
   setEditButtonEnabled();
   showScreen('analyze');
   setTimeout(() => mainBoard.resize(), 60);
@@ -558,11 +562,19 @@ function afterPositionChanged() {
   els.fenBoxAnalyze.value = game.fen();
   updateTurnIndicator();
   clearArrow();
+  clearSelection();
   bestMoveUci = null;
   els.btnPlayBest.disabled = true;
   resetEvalDisplay();
   pvLines = [];
   renderPvLines();
+  updateGameOverState();
+  if (game.game_over()) {
+    // Partita finita (scacco matto, stallo, patta): nessuna nuova ricerca ha
+    // senso su questa posizione. L'unica azione consentita resta "Annulla".
+    if (analysisRunning) stopAnalysis();
+    return;
+  }
   // Analisi continua: una mossa non la interrompe, la fa ripartire subito
   // sulla nuova posizione. Il pulsante "Ferma analisi" resta l'unico modo
   // per fermarla davvero.
@@ -579,8 +591,114 @@ function updateTurnIndicator() {
   els.turnIndicator.title = title;
 }
 
+// Ad analisi terminata (scacco matto/stallo/patta) si blocca ogni possibilita'
+// di "continuare a giocare" sulla scacchiera: l'unica via d'uscita e'
+// annullare l'ultima mossa. Evita stati incoerenti (analisi bloccata su una
+// posizione finita, frecce/linee residue di una ricerca ormai priva di senso).
+function updateGameOverState() {
+  const over = game.game_over();
+  els.btnAnalyze.disabled = over;
+  if (!over) {
+    els.gameOverBanner.classList.remove('visible');
+    return;
+  }
+  let msg;
+  if (game.in_checkmate()) msg = (game.turn() === 'w' ? 'Il nero' : 'Il bianco') + ' vince per scacco matto.';
+  else if (game.in_stalemate()) msg = 'Stallo: partita patta.';
+  else if (game.in_threefold_repetition()) msg = 'Patta per tripla ripetizione.';
+  else if (game.insufficient_material()) msg = 'Patta per materiale insufficiente.';
+  else msg = 'Partita terminata (regola delle 50 mosse).';
+  els.gameOverBanner.textContent = msg + ' Usa "Annulla" per tornare indietro.';
+  els.gameOverBanner.classList.add('visible');
+}
+
 function setEditButtonEnabled() {
   els.btnEditBoard.disabled = analysisRunning;
+}
+
+/* ---------- selezione/spostamento a doppio tap (senza trascinamento) ---------- */
+
+// Determina la casella toccata a partire dalle coordinate del puntatore,
+// tenendo conto dell'orientamento corrente della scacchiera (speculare a
+// squareToXY, usata per disegnare la freccia della mossa migliore).
+function xyToSquare(clientX, clientY, boardEl, orientation) {
+  const rect = boardEl.getBoundingClientRect();
+  if (!rect.width || clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
+  const size = rect.width / 8;
+  const col = Math.floor((clientX - rect.left) / size);
+  const row = Math.floor((clientY - rect.top) / size);
+  let file, rank;
+  if (orientation === 'white') { file = col; rank = 8 - row; }
+  else { file = 7 - col; rank = row + 1; }
+  if (file < 0 || file > 7 || rank < 1 || rank > 8) return null;
+  return FILES[file] + rank;
+}
+
+// Livello indipendente dal drag&drop di chessboard.js: osserva pointerdown/up
+// senza intercettarli (nessun preventDefault/stopPropagation), cosi' il
+// trascinamento esistente continua a funzionare invariato. Se tra down e up
+// il puntatore si e' spostato poco ed e' passato poco tempo, lo consideriamo
+// un "tap" e proviamo una selezione/mossa; altrimenti lasciamo che sia stato
+// un trascinamento vero, gia' gestito da onMainDrop.
+const TAP_MOVE_THRESHOLD = 10;
+const TAP_TIME_THRESHOLD = 600;
+
+function bindMainBoardTap() {
+  const boardEl = els.mainBoard;
+  boardEl.addEventListener('pointerdown', evt => {
+    tapStart = { x: evt.clientX, y: evt.clientY, t: Date.now(), id: evt.pointerId };
+  });
+  boardEl.addEventListener('pointerup', evt => {
+    if (!tapStart || tapStart.id !== evt.pointerId) { tapStart = null; return; }
+    const dx = evt.clientX - tapStart.x, dy = evt.clientY - tapStart.y;
+    const dist = Math.hypot(dx, dy);
+    const dt = Date.now() - tapStart.t;
+    tapStart = null;
+    if (dist > TAP_MOVE_THRESHOLD || dt > TAP_TIME_THRESHOLD) return;
+    const square = xyToSquare(evt.clientX, evt.clientY, boardEl, mainBoard.orientation());
+    if (square) handleSquareTap(square);
+  });
+  boardEl.addEventListener('pointercancel', () => { tapStart = null; });
+}
+
+function handleSquareTap(square) {
+  if (!game || game.game_over()) return;
+  const piece = game.get(square);
+  if (selectedSquare) {
+    if (selectedSquare === square) { clearSelection(); return; }
+    const move = game.move({ from: selectedSquare, to: square, promotion: 'q' });
+    if (move) {
+      clearSelection();
+      mainBoard.position(game.fen());
+      afterPositionChanged();
+      return;
+    }
+    if (piece && piece.color === game.turn()) {
+      selectSquareVisual(square);
+    } else {
+      clearSelection();
+    }
+    return;
+  }
+  if (piece && piece.color === game.turn()) selectSquareVisual(square);
+}
+
+function selectSquareVisual(square) {
+  clearSelectionVisual();
+  selectedSquare = square;
+  const el = els.mainBoard.querySelector('.square-' + square);
+  if (el) el.classList.add('square-selected');
+}
+
+function clearSelectionVisual() {
+  if (!selectedSquare) return;
+  const el = els.mainBoard.querySelector('.square-' + selectedSquare);
+  if (el) el.classList.remove('square-selected');
+}
+
+function clearSelection() {
+  clearSelectionVisual();
+  selectedSquare = null;
 }
 
 /* ---------- modifica scacchiera (ad analisi ferma) ---------- */
@@ -667,7 +785,9 @@ function bindEditBoardScreen() {
 }
 
 function bindAnalyzeScreen() {
-  els.btnFlipBoard.addEventListener('click', () => { mainBoard.flip(); setTimeout(drawArrowIfAny, 50); });
+  bindMainBoardTap();
+
+  els.btnFlipBoard.addEventListener('click', () => { mainBoard.flip(); setTimeout(drawArrowIfAny, 50); clearSelection(); });
 
   els.btnUndoMove.addEventListener('click', () => {
     const undone = game.undo();

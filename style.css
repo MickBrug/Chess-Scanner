@@ -221,6 +221,10 @@ label.check input { width: 17px; height: 17px; accent-color: var(--accent); }
 
 #editorBoard, #mainBoard { width: 100%; max-width: 480px; margin: 0 auto; }
 
+/* Un trascinamento che parte sulla scacchiera non deve mai far scorrere la
+   pagina (mobile Android): lo scroll resta libero altrove. */
+#mainBoard, #mainBoard * { touch-action: none; }
+
 .spare-label {
   text-align: center;
   font-size: 11px;
@@ -313,13 +317,55 @@ select, input[type="text"] {
   text-align: right;
 }
 
-.pv-list {
-  margin-top: 10px;
+.pv-panel {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pv-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pv-line:active { transform: scale(0.99); }
+
+.pv-line .pv-rank {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  min-width: 14px;
+}
+
+.pv-line .pv-eval {
+  font-family: "SF Mono", Consolas, monospace;
+  font-weight: 700;
+  font-size: 13px;
+  min-width: 48px;
+  color: var(--accent);
+}
+
+.pv-line .pv-moves {
   font-family: "SF Mono", Consolas, monospace;
   font-size: 12.5px;
-  color: var(--text-dim);
-  line-height: 1.7;
+  color: var(--text);
+  line-height: 1.5;
   word-break: break-word;
+  flex: 1;
+}
+
+.pv-line.pv-empty {
+  color: var(--text-dim);
+  justify-content: center;
+  cursor: default;
 }
 
 .status-line {

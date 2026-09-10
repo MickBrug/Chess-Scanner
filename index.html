@@ -125,16 +125,22 @@
     <!-- STEP 4: ANALYZE -->
     <section class="screen" id="screen-analyze">
       <div class="card">
-        <div class="board-wrap">
-          <div id="mainBoard"></div>
-          <svg id="arrowLayer"></svg>
-        </div>
-        <div class="btn-row" style="margin-top:12px">
+        <div class="btn-row" style="margin-bottom:10px">
           <button class="ghost icon-btn" id="btnFlipBoard">&#8635; Gira scacchiera</button>
           <button class="ghost icon-btn" id="btnUndoMove">&#8630; Annulla mossa</button>
           <span class="turn-indicator" id="turnIndicator" style="margin-left:auto"></span>
         </div>
-        <textarea class="fen-box" id="fenBoxAnalyze" rows="2" spellcheck="false"></textarea>
+        <div class="board-wrap">
+          <div id="mainBoard"></div>
+          <svg id="arrowLayer"></svg>
+        </div>
+
+        <div class="pv-panel" id="pvPanel"></div>
+
+        <div class="analysis-controls">
+          <button class="primary" id="btnAnalyze">&#9654; Avvia analisi</button>
+          <button class="danger" id="btnStopAnalyze" style="display:none">&#9632; Ferma analisi</button>
+        </div>
       </div>
 
       <div class="card">
@@ -142,26 +148,36 @@
           <span class="field-label" style="margin:0">Analisi Stockfish</span>
           <span class="badge" id="engineStatus">motore non caricato</span>
         </div>
-        <div class="depth-row">
-          <span class="field-label" style="margin:0; white-space:nowrap">Tempo</span>
-          <input type="range" id="rangeMovetime" min="300" max="8000" step="100" value="1500">
-          <span class="badge" id="movetimeLabel">1.5s</span>
-        </div>
-        <div class="analysis-controls">
-          <button class="primary" id="btnAnalyze">&#9654; Avvia analisi</button>
-          <button class="danger" id="btnStopAnalyze" style="display:none">&#9632; Ferma</button>
+        <div class="grid-2">
+          <div>
+            <span class="field-label">Numero di linee</span>
+            <select id="selMultiPv">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+            </select>
+          </div>
+          <div>
+            <span class="field-label">Tempo per mossa</span>
+            <div class="depth-row" style="margin-top:0">
+              <input type="range" id="rangeMovetime" min="300" max="8000" step="100" value="1500">
+              <span class="badge" id="movetimeLabel">1.5s</span>
+            </div>
+          </div>
         </div>
 
         <div class="eval-bar-wrap">
           <div class="eval-bar"><div class="eval-bar-fill" id="evalBarFill"></div></div>
           <span class="eval-text" id="evalText">--</span>
         </div>
-        <div class="status-line" id="engineLine"></div>
-        <div class="pv-list" id="pvList"></div>
 
         <div class="btn-row" style="margin-top:12px">
-          <button class="full" id="btnPlayBest" disabled>Gioca mossa migliore</button>
+          <button class="full" id="btnPlayBest" disabled>Gioca mossa migliore (linea 1)</button>
         </div>
+
+        <textarea class="fen-box" id="fenBoxAnalyze" rows="2" spellcheck="false"></textarea>
       </div>
 
       <div class="card">

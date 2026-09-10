@@ -23,6 +23,7 @@ let engine = null;
 let engineReady = false;
 let analysisRunning = false;
 let bestMoveUci = null;
+let pvLines = [];
 let errorTimer = null;
 
 document.addEventListener('DOMContentLoaded', init);
@@ -48,8 +49,8 @@ function cacheEls() {
     'selTurn', 'inputEp', 'chkCK', 'chkCQ', 'chkck', 'chkcq', 'fenBoxEditor',
     'btnBackToCapture2', 'btnGoAnalyze',
     'mainBoard', 'arrowLayer', 'btnFlipBoard', 'btnUndoMove', 'turnIndicator', 'fenBoxAnalyze',
-    'engineStatus', 'rangeMovetime', 'movetimeLabel', 'btnAnalyze', 'btnStopAnalyze',
-    'evalBarFill', 'evalText', 'engineLine', 'pvList', 'btnPlayBest', 'btnNewScan'
+    'engineStatus', 'selMultiPv', 'rangeMovetime', 'movetimeLabel', 'btnAnalyze', 'btnStopAnalyze',
+    'evalBarFill', 'evalText', 'pvPanel', 'btnPlayBest', 'btnNewScan'
   ];
   ids.forEach(id => { els[id] = document.getElementById(id); });
 }
@@ -526,7 +527,8 @@ function goToAnalyzeScreen(fen) {
   els.btnPlayBest.disabled = true;
   clearArrow();
   resetEvalDisplay();
-  els.pvList.textContent = '';
+  pvLines = [];
+  renderPvLines();
   updateTurnIndicator();
   showScreen('analyze');
   setTimeout(() => mainBoard.resize(), 60);
@@ -550,8 +552,12 @@ function afterPositionChanged() {
   bestMoveUci = null;
   els.btnPlayBest.disabled = true;
   resetEvalDisplay();
-  els.pvList.textContent = '';
-  if (analysisRunning) stopAnalysis();
+  pvLines = [];
+  renderPvLines();
+  // Analisi continua: una mossa non la interrompe, la fa ripartire subito
+  // sulla nuova posizione. Il pulsante "Ferma analisi" resta l'unico modo
+  // per fermarla davvero.
+  if (analysisRunning) startAnalysis();
 }
 
 function updateTurnIndicator() {
@@ -587,17 +593,16 @@ function bindAnalyzeScreen() {
     els.movetimeLabel.textContent = (parseInt(els.rangeMovetime.value, 10) / 1000).toFixed(1) + 's';
   });
 
+  els.selMultiPv.addEventListener('change', () => {
+    pvLines = [];
+    renderPvLines();
+    if (analysisRunning) startAnalysis();
+  });
+
   els.btnAnalyze.addEventListener('click', startAnalysis);
   els.btnStopAnalyze.addEventListener('click', stopAnalysis);
 
-  els.btnPlayBest.addEventListener('click', () => {
-    if (!bestMoveUci || bestMoveUci === '(none)') return;
-    const from = bestMoveUci.slice(0, 2), to = bestMoveUci.slice(2, 4), promo = bestMoveUci.slice(4, 5) || 'q';
-    const move = game.move({ from, to, promotion: promo });
-    if (!move) return;
-    mainBoard.position(game.fen());
-    afterPositionChanged();
-  });
+  els.btnPlayBest.addEventListener('click', () => playLine(1));
 
   els.btnNewScan.addEventListener('click', () => {
     if (analysisRunning) stopAnalysis();
@@ -650,25 +655,69 @@ function handleEngineMessage(line) {
 
 function parseInfoLine(line) {
   const depthM = line.match(/\bdepth (\d+)/);
+  const multipvM = line.match(/\bmultipv (\d+)/);
   const scoreM = line.match(/\bscore (cp|mate) (-?\d+)/);
   const pvM = line.match(/\bpv (.+)$/);
-  if (!pvM) return;
-  const pvMoves = pvM[1].trim().split(/\s+/);
-  bestMoveUci = pvMoves[0];
-  els.btnPlayBest.disabled = false;
-  drawArrowForMove(bestMoveUci);
+  if (!pvM || !scoreM) return;
 
-  if (scoreM) {
-    const kind = scoreM[1];
-    let val = parseInt(scoreM[2], 10);
-    const whiteToMove = game.turn() === 'w';
-    if (!whiteToMove) val = -val;
+  const rank = multipvM ? parseInt(multipvM[1], 10) : 1;
+  const pvMoves = pvM[1].trim().split(/\s+/);
+  const kind = scoreM[1];
+  let val = parseInt(scoreM[2], 10);
+  if (game.turn() !== 'w') val = -val;
+  const depth = depthM ? parseInt(depthM[1], 10) : 0;
+
+  pvLines[rank - 1] = { rank, depth, kind, val, uciMoves: pvMoves, sans: pvToSan(pvMoves.slice(0, 10)) };
+  renderPvLines();
+
+  if (rank === 1) {
+    bestMoveUci = pvMoves[0];
+    els.btnPlayBest.disabled = false;
+    drawArrowForMove(bestMoveUci);
     renderEval(kind, val);
   }
+  els.engineStatus.innerHTML = '<span class="spinner"></span> analisi in corso (profondita\' ' + depth + ')';
+}
 
-  const depth = depthM ? depthM[1] : '?';
-  els.engineLine.textContent = `profondita\' ${depth}`;
-  els.pvList.textContent = 'Linea: ' + pvToSan(pvMoves.slice(0, 8)).join(' ');
+function escapeHtml(s) {
+  return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+function renderPvLines() {
+  const count = parseInt(els.selMultiPv.value, 10) || 3;
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    const pv = pvLines[i];
+    if (!pv) {
+      html += '<div class="pv-line pv-empty">&hellip;</div>';
+      continue;
+    }
+    const evalStr = pv.kind === 'mate'
+      ? (pv.val > 0 ? '#' : '#-') + Math.abs(pv.val)
+      : (pv.val > 0 ? '+' : '') + (pv.val / 100).toFixed(2);
+    html += `<div class="pv-line" data-rank="${i + 1}">` +
+      `<span class="pv-rank">${i + 1}.</span>` +
+      `<span class="pv-eval">${evalStr}</span>` +
+      `<span class="pv-moves">${escapeHtml(pv.sans.join(' '))}</span>` +
+      '</div>';
+  }
+  els.pvPanel.innerHTML = html;
+  els.pvPanel.querySelectorAll('.pv-line[data-rank]').forEach(el => {
+    el.addEventListener('click', () => playLine(parseInt(el.dataset.rank, 10)));
+  });
+}
+
+// Gioca la prima mossa della linea indicata (1 = migliore) e fa ripartire
+// l'analisi sulla nuova posizione se e' attiva la modalita' continua.
+function playLine(rank) {
+  const pv = pvLines[rank - 1];
+  const uci = pv && pv.uciMoves && pv.uciMoves[0];
+  if (!uci) return;
+  const from = uci.slice(0, 2), to = uci.slice(2, 4), promo = uci.slice(4, 5) || 'q';
+  const move = game.move({ from, to, promotion: promo });
+  if (!move) return;
+  mainBoard.position(game.fen());
+  afterPositionChanged();
 }
 
 function pvToSan(pvMoves) {
@@ -699,20 +748,25 @@ function renderEval(kind, val) {
 function resetEvalDisplay() {
   els.evalText.textContent = '--';
   els.evalBarFill.style.width = '50%';
-  els.engineLine.textContent = '';
 }
 
 function onBestMove(line) {
   const parts = line.split(/\s+/);
   const mv = parts[1];
-  analysisRunning = false;
-  els.btnAnalyze.style.display = '';
-  els.btnStopAnalyze.style.display = 'none';
-  els.engineStatus.textContent = 'analisi completata';
   if (mv && mv !== '(none)') {
     bestMoveUci = mv;
     els.btnPlayBest.disabled = false;
     drawArrowForMove(mv);
+  }
+  if (analysisRunning) {
+    // Modalita' continua ancora attiva: il pensiero per questa posizione e'
+    // finito, ma si resta pronti a ripartire subito alla prossima mossa.
+    // Il pulsante "Ferma analisi" resta visibile finche' l'utente non lo preme.
+    els.engineStatus.textContent = 'analisi completata, in attesa della prossima mossa';
+  } else {
+    els.btnAnalyze.style.display = '';
+    els.btnStopAnalyze.style.display = 'none';
+    els.engineStatus.textContent = 'fermato';
   }
 }
 
@@ -721,8 +775,8 @@ function startAnalysis() {
   initEngine();
   const fen = game.fen();
   clearArrow();
-  els.pvList.textContent = '';
-  els.engineLine.textContent = '';
+  pvLines = [];
+  renderPvLines();
   els.evalText.textContent = '...';
   analysisRunning = true;
   bestMoveUci = null;
@@ -732,9 +786,13 @@ function startAnalysis() {
   els.engineStatus.innerHTML = '<span class="spinner"></span> analisi in corso';
 
   const movetime = parseInt(els.rangeMovetime.value, 10);
+  const multipv = parseInt(els.selMultiPv.value, 10) || 3;
   const send = () => {
-    engine.postMessage('setoption name MultiPV value 1');
-    engine.postMessage('ucinewgame');
+    // "stop" e' innocuo se il motore non stava gia' cercando: garantisce
+    // che una ricerca precedente (su un'altra posizione) venga interrotta
+    // prima di iniziarne una nuova, per l'analisi continua dopo una mossa.
+    engine.postMessage('stop');
+    engine.postMessage('setoption name MultiPV value ' + multipv);
     engine.postMessage('position fen ' + fen);
     engine.postMessage('go movetime ' + movetime);
   };

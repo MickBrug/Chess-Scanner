@@ -207,13 +207,6 @@ canvas#overlayCanvas {
   gap: 10px;
 }
 
-.toggle-row {
-  display: flex;
-  gap: 16px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
-
 label.check {
   display: flex;
   align-items: center;
@@ -374,13 +367,6 @@ select, input[type="text"] {
   color: var(--text-dim);
   justify-content: center;
   cursor: default;
-}
-
-.status-line {
-  font-size: 13px;
-  color: var(--text-dim);
-  margin-top: 8px;
-  min-height: 18px;
 }
 
 .analysis-controls {

@@ -78,31 +78,12 @@
     <!-- STEP 3: CORRECT -->
     <section class="screen" id="screen-correct">
       <div class="card">
-        <p class="hint">Rilevamento automatico completato. <b>Trascina i pezzi corretti</b> dal vassoio sulle caselle per sistemare eventuali errori.</p>
-        <p class="status-line" id="aiStatus"></p>
-        <div class="toggle-row">
-          <label class="check"><input type="checkbox" id="chkFlipRows"> Nero in basso nella foto</label>
-          <label class="check"><input type="checkbox" id="chkMirror"> Specchia colonne (a&#8596;h)</label>
-        </div>
         <div id="editorBoard"></div>
-        <div class="btn-row" style="margin-top:14px">
+        <div class="btn-grid-2x2" style="margin-top:14px">
           <button class="ghost icon-btn" id="btnClearBoard">Svuota</button>
           <button class="ghost icon-btn" id="btnStartPos">Posizione iniziale</button>
-          <button class="ghost icon-btn" id="btnRedetect">&#8635; Ri-rileva</button>
-        </div>
-
-        <div class="grid-2">
-          <div>
-            <span class="field-label">Turno di chi muove</span>
-            <select id="selTurn">
-              <option value="w">Bianco</option>
-              <option value="b">Nero</option>
-            </select>
-          </div>
-          <div>
-            <span class="field-label">Casella en passant</span>
-            <input type="text" id="inputEp" placeholder="- (nessuna)" maxlength="2">
-          </div>
+          <button class="ghost icon-btn" id="btnEditorFlip">&#8645; Capovolgi</button>
+          <button class="ghost icon-btn" id="editorTurnIndicator"></button>
         </div>
 
         <span class="field-label" style="margin-top:12px; display:block">Arrocco disponibile</span>
@@ -116,8 +97,8 @@
         <textarea class="fen-box" id="fenBoxEditor" rows="2" spellcheck="false"></textarea>
 
         <div class="btn-row" style="margin-top:14px">
-          <button class="ghost" id="btnBackToCapture2">&larr; Nuova scansione</button>
-          <button class="primary full" id="btnGoAnalyze">Analizza posizione &rarr;</button>
+          <button class="ghost" id="btnBackToCapture2" style="flex:1">Nuova scansione</button>
+          <button class="primary" id="btnGoAnalyze" style="flex:1">Analizza posizione</button>
         </div>
       </div>
     </section>

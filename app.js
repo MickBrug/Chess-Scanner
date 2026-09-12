@@ -11,7 +11,6 @@ let photoImg = null;
 let points = [];
 let dragIndex = -1;
 let squareCanvas = null;
-let lastCorners = null;
 let detectedCells = null;
 let detectionGrid = null;
 let scanGeneration = 0;
@@ -28,6 +27,7 @@ let pvLines = [];
 let errorTimer = null;
 let selectedSquare = null;
 let tapStart = null;
+let editorTurn = 'w';
 
 document.addEventListener('DOMContentLoaded', init);
 
@@ -48,8 +48,8 @@ function cacheEls() {
     'errorBanner', 'btnCamera', 'btnGallery', 'inputCamera', 'inputGallery', 'btnManual',
     'photoCanvas', 'overlayCanvas', 'canvasWrap', 'btnResetPoints', 'pointsBadge',
     'btnBackToCapture', 'btnConfirmCorners', 'calibrateHint', 'manualCalibControls',
-    'chkFlipRows', 'chkMirror', 'editorBoard', 'btnClearBoard', 'btnStartPos', 'btnRedetect', 'aiStatus',
-    'selTurn', 'inputEp', 'chkCK', 'chkCQ', 'chkck', 'chkcq', 'fenBoxEditor',
+    'editorBoard', 'btnClearBoard', 'btnStartPos', 'btnEditorFlip', 'editorTurnIndicator',
+    'chkCK', 'chkCQ', 'chkck', 'chkcq', 'fenBoxEditor',
     'btnBackToCapture2', 'btnGoAnalyze',
     'analyzeMain', 'mainBoard', 'arrowLayer', 'btnFlipBoard', 'btnEditBoard', 'btnUndoMove', 'turnIndicator', 'gameOverBanner', 'fenBoxAnalyze',
     'engineStatus', 'selMultiPv', 'rangeMovetime', 'movetimeLabel', 'btnAnalyze', 'btnStopAnalyze',
@@ -97,9 +97,8 @@ function bindCaptureScreen() {
     detectedCells = null;
     detectionGrid = null;
     squareCanvas = null;
-    lastCorners = null;
     scanGeneration++;
-    els.aiStatus.textContent = '';
+    editorTurn = 'w';
     editorBoard.clear(false);
     updateFenFromEditor();
     showScreen('correct');
@@ -144,6 +143,7 @@ function setupCalibrationImage(img) {
   const w = Math.round(img.width * scale);
   const h = Math.round(img.height * scale);
   photoImg = img;
+  editorTurn = 'w';
   els.photoCanvas.width = w;
   els.photoCanvas.height = h;
   els.overlayCanvas.width = w;
@@ -174,11 +174,9 @@ async function runAutoDetect(generation) {
 
 function applyAutoDetectResult(result) {
   squareCanvas = result.square;
-  lastCorners = null;
   detectionGrid = result.grid;
   detectedCells = BoardDetect.analyzeCells(squareCanvas, 8);
   applyDetectionToEditor();
-  els.aiStatus.textContent = '\u{1F916} Scacchiera individuata e pezzi riconosciuti automaticamente: controlla e correggi se necessario.';
 }
 
 // Percorso principale, alla prima scansione di una foto: mostra lo stato di
@@ -206,22 +204,6 @@ async function startAutoDetectFlow() {
 function revealManualCalibration() {
   els.calibrateHint.innerHTML = 'Non sono riuscito a individuare la scacchiera da solo. Tocca i 4 angoli nell\'immagine, in quest\'ordine: <b>alto-sinistra &rarr; alto-destra &rarr; basso-destra &rarr; basso-sinistra</b>.';
   els.manualCalibControls.hidden = false;
-}
-
-// Richiamato da "Ri-rileva" sulla schermata di correzione quando la
-// scansione originale era automatica: ripete il rilevamento senza
-// abbandonare la schermata corrente.
-async function redetectAuto() {
-  scanGeneration++;
-  const generation = scanGeneration;
-  els.aiStatus.innerHTML = '<span class="spinner"></span> Rilevamento automatico in corso&hellip;';
-  const result = await runAutoDetect(generation);
-  if (result === undefined) return;
-  if (result) {
-    applyAutoDetectResult(result);
-  } else {
-    els.aiStatus.textContent = 'Scacchiera non individuata. Prova con "Nuova scansione": se non si trova di nuovo, potrai toccare i 4 angoli a mano.';
-  }
 }
 
 function getCanvasPos(evt, canvas) {
@@ -311,7 +293,6 @@ function bindCalibrateScreen() {
     let paddedCanvas;
     try {
       squareCanvas = BoardDetect.warpToSquare(els.photoCanvas, corners, 512);
-      lastCorners = corners;
       detectedCells = BoardDetect.analyzeCells(squareCanvas, 8);
       detectionGrid = null;
       scanGeneration++;
@@ -348,17 +329,16 @@ function initEditorBoard() {
   });
 }
 
+// L'orientamento a1/h8 si corregge a posteriori con "Capovolgi" (come nella
+// modifica in-analisi), non piu' con toggle prima del rilevamento: qui si
+// assume sempre la lettura standard riga 0 = rank 8, colonna 0 = file a.
 function cellsToPosition(cells) {
-  const flip = els.chkFlipRows.checked;
-  const mirror = els.chkMirror.checked;
   const pos = {};
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       const cell = cells[r][c];
       if (!cell.occupied) continue;
-      const rank = flip ? (r + 1) : (8 - r);
-      const fileIdx = mirror ? (7 - c) : c;
-      const square = FILES[fileIdx] + rank;
+      const square = FILES[c] + (8 - r);
       pos[square] = cell.color === 'w' ? 'wP' : 'bP';
     }
   }
@@ -366,16 +346,12 @@ function cellsToPosition(cells) {
 }
 
 function gridToPosition(grid) {
-  const flip = els.chkFlipRows.checked;
-  const mirror = els.chkMirror.checked;
   const pos = {};
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       const piece = grid[r][c];
       if (!piece) continue;
-      const rank = flip ? (r + 1) : (8 - r);
-      const fileIdx = mirror ? (7 - c) : c;
-      const square = FILES[fileIdx] + rank;
+      const square = FILES[c] + (8 - r);
       pos[square] = piece.color + piece.letter;
     }
   }
@@ -396,15 +372,13 @@ function applyDetectionToEditor() {
 function runAiDetection(canvasForAi) {
   if (typeof PieceDetector === 'undefined') return;
   const generation = scanGeneration;
-  els.aiStatus.innerHTML = '<span class="spinner"></span> Riconoscimento pezzi con IA in corso&hellip;';
   PieceDetector.detectBoard(canvasForAi).then(grid => {
     if (generation !== scanGeneration) return;
     detectionGrid = grid;
     applyDetectionToEditor();
-    els.aiStatus.textContent = '\u{1F916} Pezzi riconosciuti con IA: controlla e correggi se necessario.';
   }).catch(() => {
-    if (generation !== scanGeneration) return;
-    els.aiStatus.textContent = 'Riconoscimento IA non disponibile (serve una prima connessione internet per scaricare il modello). Uso la stima base.';
+    // Riconoscimento IA non disponibile (es. nessuna connessione per
+    // scaricare il modello la prima volta): resta la stima base gia' mostrata.
   });
 }
 
@@ -415,11 +389,6 @@ function buildCastleString() {
   if (els.chkck.checked) s += 'k';
   if (els.chkcq.checked) s += 'q';
   return s || '-';
-}
-
-function normalizeEp(raw) {
-  const v = (raw || '').trim().toLowerCase();
-  return /^[a-h][36]$/.test(v) ? v : '-';
 }
 
 function boardPositionToFEN(pos, turn, castle, ep) {
@@ -443,38 +412,37 @@ function boardPositionToFEN(pos, turn, castle, ep) {
   return `${rows.join('/')} ${turn} ${castle} ${ep} 0 1`;
 }
 
+function updateEditorTurnIndicator() {
+  const w = editorTurn === 'w';
+  els.editorTurnIndicator.innerHTML = `<span class="dot-${w ? 'white' : 'black'}"></span>`;
+  els.editorTurnIndicator.title = 'Tocca a ' + (w ? 'Bianco' : 'Nero') + ' muovere (tocca per cambiare)';
+}
+
 function updateFenFromEditor(posOverride) {
+  updateEditorTurnIndicator();
   const pos = posOverride || editorBoard.position();
-  const fen = boardPositionToFEN(pos, els.selTurn.value, buildCastleString(), normalizeEp(els.inputEp.value));
+  const fen = boardPositionToFEN(pos, editorTurn, buildCastleString(), '-');
   els.fenBoxEditor.value = fen;
 }
 
 function bindCorrectScreen() {
-  els.chkFlipRows.addEventListener('change', applyDetectionToEditor);
-  els.chkMirror.addEventListener('change', applyDetectionToEditor);
+  els.btnClearBoard.addEventListener('click', () => { editorBoard.clear(false); updateFenFromEditor(); });
+  els.btnStartPos.addEventListener('click', () => { editorTurn = 'w'; editorBoard.start(false); updateFenFromEditor(); });
 
-  els.btnClearBoard.addEventListener('click', () => editorBoard.clear(false));
-  els.btnStartPos.addEventListener('click', () => editorBoard.start(false));
-  els.btnRedetect.addEventListener('click', () => {
-    if (!squareCanvas) { showError('Nessuna foto da ri-analizzare: parti da una nuova scansione.'); return; }
-    if (lastCorners) {
-      // Scansione da tocco manuale: ripete l'analisi sugli stessi angoli.
-      detectionGrid = null;
-      scanGeneration++;
-      detectedCells = BoardDetect.analyzeCells(squareCanvas, 8);
-      applyDetectionToEditor();
-      const paddedCorners = BoardDetect.expandQuad(lastCorners, 1.3);
-      const paddedCanvas = BoardDetect.warpToSquare(els.photoCanvas, paddedCorners, 512);
-      runAiDetection(paddedCanvas);
-    } else {
-      // Scansione automatica: ripete l'intero rilevamento dalla foto originale.
-      redetectAuto();
-    }
+  els.btnEditorFlip.addEventListener('click', () => {
+    const rotated = rotatePosition180(editorBoard.position());
+    editorBoard.position(rotated, false);
+    editorBoard.orientation(editorBoard.orientation() === 'white' ? 'black' : 'white');
+    updateFenFromEditor(rotated);
   });
 
-  [els.selTurn, els.inputEp, els.chkCK, els.chkCQ, els.chkck, els.chkcq].forEach(el => {
+  els.editorTurnIndicator.addEventListener('click', () => {
+    editorTurn = editorTurn === 'w' ? 'b' : 'w';
+    updateFenFromEditor();
+  });
+
+  [els.chkCK, els.chkCQ, els.chkck, els.chkcq].forEach(el => {
     el.addEventListener('change', updateFenFromEditor);
-    el.addEventListener('input', updateFenFromEditor);
   });
 
   els.fenBoxEditor.addEventListener('change', () => {
@@ -486,14 +454,13 @@ function bindCorrectScreen() {
       return;
     }
     editorBoard.position(placement, false);
-    if (parts[1] === 'w' || parts[1] === 'b') els.selTurn.value = parts[1];
+    if (parts[1] === 'w' || parts[1] === 'b') editorTurn = parts[1];
     if (parts[2]) {
       els.chkCK.checked = parts[2].includes('K');
       els.chkCQ.checked = parts[2].includes('Q');
       els.chkck.checked = parts[2].includes('k');
       els.chkcq.checked = parts[2].includes('q');
     }
-    els.inputEp.value = (parts[3] && parts[3] !== '-') ? parts[3] : '';
     hideError();
     updateFenFromEditor();
   });
@@ -827,7 +794,6 @@ function bindAnalyzeScreen() {
     if (analysisRunning) stopAnalysis();
     points = [];
     squareCanvas = null;
-    lastCorners = null;
     detectedCells = null;
     detectionGrid = null;
     scanGeneration++;

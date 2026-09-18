@@ -99,6 +99,7 @@ function bindCaptureScreen() {
     squareCanvas = null;
     scanGeneration++;
     editorTurn = 'w';
+    editorBoard.orientation('white');
     editorBoard.clear(false);
     updateFenFromEditor();
     showScreen('correct');
@@ -144,6 +145,7 @@ function setupCalibrationImage(img) {
   const h = Math.round(img.height * scale);
   photoImg = img;
   editorTurn = 'w';
+  editorBoard.orientation('white');
   els.photoCanvas.width = w;
   els.photoCanvas.height = h;
   els.overlayCanvas.width = w;
@@ -485,16 +487,22 @@ function bindCorrectScreen() {
 /* ---------- STEP 4: analisi con Stockfish ---------- */
 
 function goToAnalyzeScreen(fen) {
+  // La scacchiera di analisi deve aprirsi con lo stesso orientamento lasciato
+  // sulla schermata di correzione (es. dopo un "Capovolgi" per una scan con
+  // il nero in basso), altrimenti bisognerebbe ruotarla di nuovo a mano.
+  const orientation = editorBoard.orientation();
   if (!mainBoard) {
     mainBoard = Chessboard('mainBoard', {
       draggable: true,
       position: fen,
+      orientation: orientation,
       pieceTheme: PIECE_THEME,
       onDragStart: onMainDragStart,
       onDrop: onMainDrop,
       onSnapEnd: () => mainBoard.position(game.fen())
     });
   } else {
+    mainBoard.orientation(orientation);
     mainBoard.position(fen, false);
   }
   els.editBoardView.hidden = true;

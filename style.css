@@ -416,6 +416,31 @@ select, input[type="text"] {
   height: 16px;
 }
 
+.toast {
+  position: fixed;
+  left: 50%;
+  top: max(10px, env(safe-area-inset-top));
+  transform: translate(-50%, -12px);
+  z-index: 60;
+  width: max-content;
+  max-width: min(92vw, 520px);
+  padding: 11px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.toast.visible { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.toast.ok { border-color: var(--ok); color: #9be3a8; }
+.toast.error { border-color: var(--danger); background: #2a1618; color: #ff9ea1; }
+
 .error-banner {
   background: rgba(226, 85, 90, 0.12);
   border: 1px solid var(--danger);

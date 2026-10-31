@@ -28,11 +28,23 @@ let errorTimer = null;
 let selectedSquare = null;
 let tapStart = null;
 let editorTurn = 'w';
+let currentScreen = 'capture';
+let loadingPhoto = false;
+let updatePending = false;
+let swReloading = false;
+let toastTimer = null;
+
+const PENDING_KEY = 'chessfen-pending-capture';
+const PENDING_MAX_AGE = 15 * 60 * 1000;
+const RETURN_GRACE_MS = 4000;
+const DECODE_TIMEOUT_MS = 20000;
+const DETECT_TIMEOUT_MS = 60000;
 
 document.addEventListener('DOMContentLoaded', init);
 
 function init() {
   cacheEls();
+  els.toast.addEventListener('click', () => els.toast.classList.remove('visible'));
   bindCaptureScreen();
   bindCalibrateScreen();
   bindCorrectScreen();
@@ -40,12 +52,14 @@ function init() {
   initEditorBoard();
   showScreen('capture');
   registerServiceWorker();
+  checkLostCaptureAtStartup();
+  watchReturnFromCapture();
   if (typeof PieceDetector !== 'undefined') PieceDetector.loadModel().catch(() => {});
 }
 
 function cacheEls() {
   const ids = [
-    'errorBanner', 'btnCamera', 'btnGallery', 'inputCamera', 'inputGallery', 'btnManual',
+    'toast', 'errorBanner', 'btnCamera', 'btnGallery', 'inputCamera', 'inputGallery', 'btnManual',
     'photoCanvas', 'overlayCanvas', 'canvasWrap', 'btnResetPoints', 'pointsBadge',
     'btnBackToCapture', 'btnConfirmCorners', 'calibrateHint', 'manualCalibControls',
     'editorBoard', 'btnClearBoard', 'btnStartPos', 'btnEditorFlip', 'editorTurnIndicator',
@@ -62,6 +76,12 @@ function cacheEls() {
 /* ---------- navigazione schermate ---------- */
 
 function showScreen(name) {
+  currentScreen = name;
+  if (name === 'capture' && updatePending && !loadingPhoto && !isCapturePending()) {
+    swReloading = true;
+    window.location.reload();
+    return;
+  }
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('visible'));
   document.getElementById('screen-' + name).classList.add('visible');
   const idx = SCREENS.indexOf(name);
@@ -86,13 +106,80 @@ function hideError() {
   els.errorBanner.classList.remove('visible');
 }
 
+// Segnale visibile ovunque ci si trovi (non sposta il layout): 'ok' verde,
+// 'error' rosso (resta piu' a lungo), 'info' neutro. Un tocco lo chiude.
+function notify(msg, kind = 'info', ms = 3500) {
+  els.toast.textContent = msg;
+  els.toast.className = 'toast visible ' + kind;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => els.toast.classList.remove('visible'), ms);
+}
+
+/* ---------- scatto in sospeso: rilevare le foto che non arrivano ---------- */
+
+// Quando si apre fotocamera/galleria si segna uno scatto "in attesa". Se la
+// foto arriva (evento change) o si annulla (evento cancel) il segno viene
+// tolto. Se invece torniamo all'app e il segno e' ancora li', la foto si e'
+// persa per strada: Android puo' chiudere/ricaricare la pagina mentre la
+// fotocamera e' aperta, e in quel caso nessun evento arriva mai.
+function markCapturePending(source) {
+  try { localStorage.setItem(PENDING_KEY, JSON.stringify({ t: Date.now(), source })); } catch (e) {}
+}
+
+function clearCapturePending() {
+  try { localStorage.removeItem(PENDING_KEY); } catch (e) {}
+}
+
+function isCapturePending() {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    if (!raw) return false;
+    return Date.now() - JSON.parse(raw).t < PENDING_MAX_AGE;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Pagina ricaricata con uno scatto ancora in sospeso: il telefono ha chiuso
+// l'app mentre si usava la fotocamera.
+function checkLostCaptureAtStartup() {
+  if (!isCapturePending()) return;
+  clearCapturePending();
+  notify('La foto non e\' arrivata: il telefono ha riavviato l\'app mentre usavi la fotocamera. Riprova a scattarla.', 'error', 9000);
+}
+
+// Si torna all'app (visibile di nuovo) e dopo qualche secondo non e' arrivata
+// ne' una foto ne' un annullamento: lo si segnala invece di restare fermi.
+function watchReturnFromCapture() {
+  let timer = null;
+  const arm = () => {
+    if (!isCapturePending()) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!isCapturePending() || loadingPhoto) return;
+      clearCapturePending();
+      notify('Nessuna foto ricevuta (scatto annullato o non completato). Riprova.', 'error', 8000);
+    }, RETURN_GRACE_MS);
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') arm();
+  });
+  window.addEventListener('focus', arm);
+}
+
 /* ---------- STEP 1: acquisizione ---------- */
 
 function bindCaptureScreen() {
-  els.btnCamera.addEventListener('click', () => els.inputCamera.click());
-  els.btnGallery.addEventListener('click', () => els.inputGallery.click());
+  els.btnCamera.addEventListener('click', () => { markCapturePending('camera'); els.inputCamera.click(); });
+  els.btnGallery.addEventListener('click', () => { markCapturePending('gallery'); els.inputGallery.click(); });
   els.inputCamera.addEventListener('change', onFileChosen);
   els.inputGallery.addEventListener('change', onFileChosen);
+  [els.inputCamera, els.inputGallery].forEach(input => {
+    input.addEventListener('cancel', () => {
+      clearCapturePending();
+      notify('Nessuna foto selezionata.', 'info');
+    });
+  });
   els.btnManual.addEventListener('click', () => {
     detectedCells = null;
     detectionGrid = null;
@@ -106,40 +193,91 @@ function bindCaptureScreen() {
   });
 }
 
-function onFileChosen(evt) {
-  const file = evt.target.files && evt.target.files[0];
-  evt.target.value = '';
-  if (!file) return;
-  // Le foto scattate con la fotocamera portano quasi sempre un tag EXIF di
-  // rotazione (il telefono la mostra dritta ruotandola "virtualmente").
-  // createImageBitmap con imageOrientation:'from-image' applica quella
-  // rotazione ai pixel veri prima che tocchino il canvas: senza, i pixel
-  // su cui lavoriamo potrebbero essere ruotati anche se l'anteprima sembra
-  // corretta, rendendo inutile qualunque tocco sugli angoli.
+function withTimeout(promise, ms, label) {
+  let t;
+  const timeout = new Promise((_, reject) => { t = setTimeout(() => reject(new Error(label)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+}
+
+// Le foto scattate con la fotocamera portano quasi sempre un tag EXIF di
+// rotazione (il telefono la mostra dritta ruotandola "virtualmente").
+// createImageBitmap con imageOrientation:'from-image' applica quella
+// rotazione ai pixel veri prima che tocchino il canvas: senza, i pixel
+// su cui lavoriamo potrebbero essere ruotati anche se l'anteprima sembra
+// corretta, rendendo inutile qualunque tocco sugli angoli.
+async function decodeImageFile(file) {
   if (window.createImageBitmap) {
-    createImageBitmap(file, { imageOrientation: 'from-image' })
-      .then(bitmap => setupCalibrationImage(bitmap))
-      .catch(() => loadViaImageElement(file));
-  } else {
-    loadViaImageElement(file);
+    try {
+      return await createImageBitmap(file, { imageOrientation: 'from-image' });
+    } catch (e) {
+      if (e && e.name === 'NotReadableError') throw e;
+    }
   }
+  return loadViaImageElement(file);
 }
 
 function loadViaImageElement(file) {
-  const reader = new FileReader();
-  reader.onload = e => {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
     const img = new Image();
-    img.onload = () => setupCalibrationImage(img);
-    img.onerror = () => showError('Impossibile caricare l\'immagine selezionata.');
-    img.src = e.target.result;
-  };
-  reader.readAsDataURL(file);
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode-failed')); };
+    img.src = url;
+  });
+}
+
+function describeLoadError(err, file) {
+  const type = (file && file.type) || '';
+  if (/hei[cf]/i.test(type)) return 'Formato HEIC/HEIF non supportato dal browser: scatta in JPEG oppure usa uno screenshot.';
+  if (err && err.name === 'NotReadableError') return 'Il telefono non ha reso leggibile la foto (file temporaneo perso). Riprova a scattarla.';
+  if (err && err.message === 'decode-timeout') return 'La foto e\' troppo lenta da elaborare: riprova con una foto piu\' piccola.';
+  if (err && err.message === 'empty-image') return 'La foto ricevuta non contiene immagine. Riprova.';
+  return 'Impossibile leggere la foto' + (type ? ' (' + type + ')' : '') + '. Riprova a scattarla o scegline un\'altra.';
+}
+
+async function onFileChosen(evt) {
+  const input = evt.target;
+  clearCapturePending();
+  const file = input.files && input.files[0];
+
+  if (!file) {
+    notify('Nessuna foto selezionata.', 'info');
+    return;
+  }
+  if (!file.size) {
+    input.value = '';
+    notify('La foto ricevuta e\' vuota (0 byte). Riprova a scattarla.', 'error', 9000);
+    return;
+  }
+  if (file.type && !file.type.startsWith('image/')) {
+    input.value = '';
+    notify('Il file scelto non e\' un\'immagine (' + file.type + ').', 'error', 9000);
+    return;
+  }
+
+  loadingPhoto = true;
+  notify('Caricamento foto…', 'info', 20000);
+  try {
+    const img = await withTimeout(decodeImageFile(file), DECODE_TIMEOUT_MS, 'decode-timeout');
+    if (!img.width || !img.height) throw new Error('empty-image');
+    notify('✓ Foto caricata (' + img.width + '×' + img.height + ')', 'ok', 2500);
+    setupCalibrationImage(img);
+  } catch (e) {
+    notify(describeLoadError(e, file), 'error', 9000);
+  } finally {
+    loadingPhoto = false;
+    input.value = '';
+  }
 }
 
 /* ---------- STEP 2: calibrazione (4 angoli + warp) ---------- */
 
 function setupCalibrationImage(img) {
   const maxW = 1000;
+  if (!img.width || !img.height) {
+    notify('La foto non contiene un\'immagine valida. Riprova.', 'error', 8000);
+    return;
+  }
   const scale = Math.min(1, maxW / img.width);
   const w = Math.round(img.width * scale);
   const h = Math.round(img.height * scale);
@@ -159,16 +297,17 @@ function setupCalibrationImage(img) {
 }
 
 // Individua la scacchiera e riconosce i pezzi, senza alcun tocco manuale.
-// Restituisce il risultato di PieceDetector.autoDetect(), o null se non
-// c'e' abbastanza confidenza / il modello non e' disponibile. Non tocca
-// la UI: le due funzioni sotto la usano in contesti diversi.
+// Restituisce il risultato di PieceDetector.autoDetect(), null se la
+// scacchiera non e' stata trovata con confidenza sufficiente, {error} se il
+// riconoscimento e' proprio fallito (modello non caricato, timeout...) cosi'
+// l'utente non scambia un guasto per "scacchiera non trovata". Non tocca la UI.
 async function runAutoDetect(generation) {
-  if (typeof PieceDetector === 'undefined') return null;
+  if (typeof PieceDetector === 'undefined') return { error: new Error('detector-missing') };
   let result = null;
   try {
-    result = await PieceDetector.autoDetect(els.photoCanvas);
+    result = await withTimeout(PieceDetector.autoDetect(els.photoCanvas), DETECT_TIMEOUT_MS, 'detect-timeout');
   } catch (e) {
-    result = null;
+    result = { error: e };
   }
   if (generation !== scanGeneration) return undefined; // scansione superata nel frattempo
   return result;
@@ -195,16 +334,24 @@ async function startAutoDetectFlow() {
   const result = await runAutoDetect(generation);
   if (result === undefined) return;
 
-  if (result) {
+  if (result && result.error) {
+    const timedOut = result.error.message === 'detect-timeout';
+    revealManualCalibration(timedOut
+      ? 'Il riconoscimento automatico ci mette troppo.'
+      : 'Il riconoscimento automatico non e\' disponibile (la prima volta serve internet per scaricare il modello).');
+    notify('Riconoscimento automatico non riuscito: usa i 4 angoli a mano.', 'error', 7000);
+  } else if (result) {
     applyAutoDetectResult(result);
     showScreen('correct');
+    notify('✓ Scacchiera riconosciuta: controlla i pezzi', 'ok', 2500);
   } else {
-    revealManualCalibration();
+    revealManualCalibration('Non sono riuscito a individuare la scacchiera da solo.');
+    notify('Scacchiera non individuata nella foto: usa i 4 angoli a mano.', 'error', 7000);
   }
 }
 
-function revealManualCalibration() {
-  els.calibrateHint.innerHTML = 'Non sono riuscito a individuare la scacchiera da solo. Tocca i 4 angoli nell\'immagine, in quest\'ordine: <b>alto-sinistra &rarr; alto-destra &rarr; basso-destra &rarr; basso-sinistra</b>.';
+function revealManualCalibration(lead) {
+  els.calibrateHint.innerHTML = lead + ' Tocca i 4 angoli nell\'immagine, in quest\'ordine: <b>alto-sinistra &rarr; alto-destra &rarr; basso-destra &rarr; basso-sinistra</b>.';
   els.manualCalibControls.hidden = false;
 }
 
@@ -1088,10 +1235,18 @@ function registerServiceWorker() {
       setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
     }).catch(() => {});
   });
-  let reloaded = false;
+  // Un aggiornamento dell'app non deve mai ricaricare la pagina a meta' di
+  // una scansione (si perderebbero foto e posizione in silenzio): si ricarica
+  // subito solo dalla schermata iniziale, altrimenti si rimanda a quando si
+  // torna li' (vedi showScreen).
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (reloaded) return;
-    reloaded = true;
-    window.location.reload();
+    if (swReloading) return;
+    if (currentScreen === 'capture' && !loadingPhoto && !isCapturePending()) {
+      swReloading = true;
+      window.location.reload();
+    } else {
+      updatePending = true;
+      notify('Aggiornamento pronto: si applichera\' finita questa scansione.', 'info', 4500);
+    }
   });
 }
